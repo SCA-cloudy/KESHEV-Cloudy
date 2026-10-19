@@ -74,9 +74,12 @@ function renderIdentity(input) {
     identityField(dl, '사용자', typeof user?.label === 'string' && user.label ? user.label : '확인 불가');
     const deviceStatusText = Object.hasOwn(DEVICE_STATUS_TEXT, device?.status) ? DEVICE_STATUS_TEXT[device.status] : '확인 불가';
     const deviceLabel = typeof device?.label === 'string' && device.label ? device.label : '확인 불가';
-    identityField(dl, '기기', `${deviceLabel} — ${deviceStatusText}`);
+    // 공식 요구사항: 한글 설명 옆에 서버가 준 원래 status 코드도 함께 표시한다.
+    const rawDeviceStatus = typeof device?.status === 'string' && device.status ? device.status : '확인 불가';
+    identityField(dl, '기기', `${deviceLabel} — ${deviceStatusText} (status: ${rawDeviceStatus})`);
     const sessionStatusText = Object.hasOwn(SESSION_STATUS_TEXT, session?.status) ? SESSION_STATUS_TEXT[session.status] : '확인 불가';
-    identityField(dl, '세션', sessionStatusText);
+    const rawSessionStatus = typeof session?.status === 'string' && session.status ? session.status : '확인 불가';
+    identityField(dl, '세션', `${sessionStatusText} (status: ${rawSessionStatus})`);
     root.append(dl);
     return root;
   }
