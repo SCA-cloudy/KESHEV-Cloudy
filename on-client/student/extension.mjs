@@ -139,8 +139,9 @@ function renderDecision(input) {
     const { decision, reason, checkedAt } = input.data;
     const known = Object.hasOwn(DECISION_TEXT, decision);
     const decisionLabel = known ? DECISION_TEXT[decision] : '확인 불가';
-    // 알 수 없는 decision 값이 와도 원래 코드값을 그대로 함께 보여준다(추측해서 새 값을 만들지 않음).
-    const rawDecision = typeof decision === 'string' && decision ? decision : '없음';
+    // 공식 요구사항(unknown-not-allow): 허용된 네 값(allow/deny/challenge/unknown)인지 먼저 확인하고,
+    // 그 목록에 없는 값은 받은 문자열을 그대로 보여주지 않고 표시 코드를 unknown으로 정규화한다.
+    const rawDecision = known ? decision : 'unknown';
     const decisionClass = known ? `decision-${decision}` : 'decision-unknown';
 
     root.append(decisionText('p', `${decisionLabel} (${rawDecision})`, `decision-result ${decisionClass}`));
