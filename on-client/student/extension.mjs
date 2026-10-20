@@ -142,7 +142,28 @@ function renderEventDetail(container, event) {
     eventsText('dt', '기기(device)'), eventsText('dd', eventStateText(DEVICE_STATUS_TEXT, state.device)),
   );
 
-  container.replaceChildren(fields, evidenceTitle, evidenceList, rulesTitle, rulesList, stateDl);
+  const nodes = [fields, evidenceTitle, evidenceList, rulesTitle, rulesList, stateDl];
+
+  // 16단계: 실제 목록의 supportedActions가 있을 때만 "<action> 미지원" 비활성 버튼을 둔다.
+  // 15·16단계 자동 확인이 연결되지 않은 조치를 넘겨 줄 수 있어 이 상세 화면에 둔다(요청은 보내지 않음).
+  const supportedActions = Array.isArray(event.supportedActions) ? event.supportedActions : [];
+  if (supportedActions.length > 0) {
+    nodes.push(eventsText('h5', '조치(action)', 'event-detail-subtitle'));
+    const actionsWrap = document.createElement('div');
+    actionsWrap.className = 'event-unsupported-actions';
+    for (const action of supportedActions) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.disabled = true;
+      button.className = 'event-unsupported-action';
+      button.textContent = `${action} 미지원`;
+      actionsWrap.append(button);
+    }
+    actionsWrap.append(eventsText('p', '조치 실행 연결은 준비 중입니다. 이 버튼은 요청을 보내지 않습니다.', 'event-detail-note'));
+    nodes.push(actionsWrap);
+  }
+
+  container.replaceChildren(...nodes);
 }
 
 // 15단계 구현: student/extension.mjs → renderEvents. 13·14단계 함수는 그대로 둡니다.
@@ -268,6 +289,189 @@ function renderEvents(input) {
   return root;
 }
 
+function statusText(tag, text, className) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  node.textContent = text;
+  return node;
+}
+
+// error.code에 TIMEOUT이 들어 있으면 시간 초과임을 드러내고, 그 외는 일반 실패 문구를 쓴다.
+// 다시 시도는 자동으로 하지 않고 위쪽 "다시 불러오기" 버튼을 직접 누르라고 안내한다(공식 예시 문장).
+// 한글 받침 유무에 맞는 "을/를"을 고른다(마지막 글자가 한글 음절이 아니면 "를"로 둔다).
+function withEulReul(word) {
+  const last = word.charCodeAt(word.length - 1);
+  if (last >= 0xac00 && last <= 0xd7a3) return (last - 0xac00) % 28 === 0 ? '를' : '을';
+  return '를';
+}
+
+function statusErrorText(resourceLabel, error) {
+  const message = error && typeof error.message === 'string' && error.message.trim() ? error.message : '서버에 연결하지 못했습니다.';
+  const isTimeout = error && typeof error.code === 'string' && error.code.includes('TIMEOUT');
+  const headline = isTimeout ? `${resourceLabel} 조회 시간 초과` : `${resourceLabel}${withEulReul(resourceLabel)} 불러오지 못했습니다`;
+  return `${headline}: ${message} · 다시 시도는 위쪽 다시 불러오기 버튼을 직접 누르세요.`;
+}
+
+// 기기 목록: loading/ok(목록 또는 빈 목록 문구)/error를 구분해 섹션 하나로 그린다.
+function renderDevicesSection(devices) {
+  const section = document.createElement('div');
+  section.className = 'status-devices';
+  section.append(statusText('h4', '기기', 'status-heading'));
+
+  const resource = devices && typeof devices === 'object' ? devices : {};
+  if (resource.status === 'loading') {
+    section.append(statusText('p', '불러오는 중', 'status-line status-line-loading'));
+  } else if (resource.status === 'error') {
+    section.append(statusText('p', statusErrorText('기기 목록', resource.error), 'status-line status-line-error'));
+  } else if (resource.status === 'ok' && Array.isArray(resource.data)) {
+    if (resource.data.length === 0) {
+      section.append(statusText('p', '등록된 기기가 없음', 'status-line status-line-empty'));
+    } else {
+      const list = document.createElement('ul');
+      list.className = 'status-device-list';
+      for (const device of resource.data) {
+        const label = typeof device?.label === 'string' && device.label ? device.label : (typeof device?.id === 'string' ? device.id : '확인 불가');
+        list.append(statusText('li', `${label} — ${eventStateText(DEVICE_STATUS_TEXT, device?.status)}`));
+      }
+      section.append(list);
+    }
+  } else {
+    section.append(statusText('p', '확인 불가: 응답 상태를 확인할 수 없습니다.', 'status-line'));
+  }
+  return section;
+}
+
+// 세션: 지금 검증된 연결 1개만 온다(과거 세션 전체 목록 아님)는 안내를 항상 함께 둔다.
+function renderSessionsSection(sessions) {
+  const section = document.createElement('div');
+  section.className = 'status-sessions';
+  section.append(statusText('h4', '세션', 'status-heading'));
+  section.append(statusText('p', '지금 검증된 연결 1개만 보여줍니다. 지난 세션 전체 목록이 아닙니다.', 'status-note'));
+
+  const resource = sessions && typeof sessions === 'object' ? sessions : {};
+  if (resource.status === 'loading') {
+    section.append(statusText('p', '불러오는 중', 'status-line status-line-loading'));
+  } else if (resource.status === 'error') {
+    section.append(statusText('p', statusErrorText('세션', resource.error), 'status-line status-line-error'));
+  } else if (resource.status === 'ok' && Array.isArray(resource.data)) {
+    if (resource.data.length === 0) {
+      section.append(statusText('p', '현재 연결 없음', 'status-line status-line-empty'));
+    } else {
+      const list = document.createElement('ul');
+      list.className = 'status-session-list';
+      for (const session of resource.data) {
+        const id = typeof session?.id === 'string' && session.id ? session.id : '확인 불가';
+        list.append(statusText('li', `${id} — ${eventStateText(SESSION_STATUS_TEXT, session?.status)}`));
+      }
+      section.append(list);
+    }
+  } else {
+    section.append(statusText('p', '확인 불가: 응답 상태를 확인할 수 없습니다.', 'status-line'));
+  }
+  return section;
+}
+
+// 알림: 자료(resource)·안전한 code·message를 항목마다 적고, 비어 있으면 "주의할 알림이 없습니다".
+function renderNotificationsSection(notifications) {
+  const section = document.createElement('div');
+  section.className = 'status-notifications';
+  section.append(statusText('h4', '알림', 'status-heading'));
+
+  const items = Array.isArray(notifications) ? notifications : [];
+  if (items.length === 0) {
+    section.append(statusText('p', '주의할 알림이 없습니다', 'status-line status-line-empty'));
+  } else {
+    const list = document.createElement('ul');
+    list.className = 'status-notification-list';
+    for (const item of items) {
+      const resource = typeof item?.resource === 'string' && item.resource ? item.resource : '확인 불가';
+      const code = typeof item?.code === 'string' && item.code ? item.code : '확인 불가';
+      const message = typeof item?.message === 'string' && item.message ? item.message : '';
+      list.append(statusText('li', `[${resource}] ${code} — ${message}`));
+    }
+    section.append(list);
+  }
+  return section;
+}
+
+// 진단 정보: 제공 화면이 조회해 넘겨준 값만 쓰고(/api/diagnostics 직접 호출 없음), 안전한 6개 필드만 보여준다.
+// "도움정보 복사" 버튼은 사용자가 누를 때만 그 안전한 값을 클립보드로 복사한다(자동 전송 없음).
+function renderDiagnosticsSection(diagnostics) {
+  const section = document.createElement('div');
+  section.className = 'status-diagnostics';
+  section.append(statusText('h4', '도움정보', 'status-heading'));
+
+  const resource = diagnostics && typeof diagnostics === 'object' ? diagnostics : {};
+  const copyButton = document.createElement('button');
+  copyButton.type = 'button';
+  copyButton.className = 'status-diagnostics-copy';
+  copyButton.textContent = '도움정보 복사';
+  copyButton.disabled = true;
+
+  const copyStatus = statusText('p', '', 'status-diagnostics-copy-status');
+
+  if (resource.status === 'loading') {
+    section.append(statusText('p', '불러오는 중', 'status-line status-line-loading'));
+  } else if (resource.status === 'error') {
+    section.append(statusText('p', statusErrorText('도움정보', resource.error), 'status-line status-line-error'));
+  } else if (resource.status === 'ok' && resource.data && typeof resource.data === 'object') {
+    const data = resource.data;
+    const engine = data.engine && typeof data.engine === 'object' ? data.engine : {};
+    // 공식 요구사항: requestId·component·version·checkedAt·engine.mode·engine.code만 보여준다(그 외 필드·ai 토큰류는 쓰지 않음).
+    const safe = {
+      requestId: typeof data.requestId === 'string' ? data.requestId : '확인 불가',
+      component: typeof data.component === 'string' ? data.component : '확인 불가',
+      version: typeof data.version === 'string' ? data.version : '확인 불가',
+      checkedAt: typeof data.checkedAt === 'string' ? data.checkedAt : '확인 불가',
+      engineMode: typeof engine.mode === 'string' ? engine.mode : '확인 불가',
+      engineCode: typeof engine.code === 'string' ? engine.code : '확인 불가',
+    };
+    const dl = document.createElement('dl');
+    dl.className = 'status-diagnostics-fields';
+    dl.append(
+      statusText('dt', 'requestId'), statusText('dd', safe.requestId),
+      statusText('dt', 'component'), statusText('dd', safe.component),
+      statusText('dt', 'version'), statusText('dd', safe.version),
+      statusText('dt', 'checkedAt'), statusText('dd', safe.checkedAt),
+      statusText('dt', 'engine.mode'), statusText('dd', safe.engineMode),
+      statusText('dt', 'engine.code'), statusText('dd', safe.engineCode),
+    );
+    section.append(dl);
+    copyButton.disabled = false;
+    copyButton.addEventListener('click', async () => {
+      const text = JSON.stringify(safe, null, 2);
+      try {
+        await navigator.clipboard.writeText(text);
+        copyStatus.textContent = '도움정보를 클립보드에 복사했습니다.';
+      } catch {
+        copyStatus.textContent = '복사하지 못했습니다. 위 내용을 직접 선택해 복사하세요.';
+      }
+    });
+  } else {
+    section.append(statusText('p', '확인 불가: 응답 상태를 확인할 수 없습니다.', 'status-line'));
+  }
+
+  section.append(copyButton, copyStatus);
+  return section;
+}
+
+// 16단계 구현: student/extension.mjs → renderStatus. 앞 단계 함수는 그대로 둡니다.
+// 입력은 { devices, sessions, notifications, diagnostics, mode }. devices·sessions·diagnostics는
+// { status, mode, data?, error? }. mode(전체 연결 모드)는 이 단계 요구사항(상태별 표시, 필수 확인 항목)에
+// 없어 화면에 쓰지 않는다.
+function renderStatus(input) {
+  const safeInput = input && typeof input === 'object' ? input : {};
+  const root = document.createElement('div');
+  root.className = 'status-panel';
+  root.append(
+    renderDevicesSection(safeInput.devices),
+    renderSessionsSection(safeInput.sessions),
+    renderNotificationsSection(safeInput.notifications),
+    renderDiagnosticsSection(safeInput.diagnostics),
+  );
+  return root;
+}
+
 // 13단계 구현: student/extension.mjs → renderIdentity.
 // 입력은 { me, devices, sessions }이지만, 13단계 공식 과제 안내는 me(현재 사용자·기기 1개·세션 1개)만으로
 // 화면을 채우도록 정하고 있어 devices·sessions는 이번 단계에서는 읽지 않는다(이후 단계에서 쓸 입력).
@@ -381,7 +585,7 @@ export function createStudentView() {
     renderIdentity,
     renderDecision,
     renderEvents,
-    renderStatus() { return '학생 구현 대기: 기기·세션·알림과 연결 점검 상태를 구분하세요.'; },
+    renderStatus,
     renderVulnerabilities() { return '학생 구현 대기: 정확한 설치 버전·OSV 출처·조회 시각·부분 결과·조회 실패를 구분하세요.'; },
     renderAiConnection() { return '학생 구현 대기: 모델 응답 점검과 실제 사건 설명을 구분하고 AI 오류·취소·수동 복구를 안내하세요.'; },
     renderExplanation() { return '학생 구현 대기: 선택한 사건의 근거·규칙·현재 상태와 AI 설명을 연결하세요. 제안은 자동 실행하지 않습니다.'; },
