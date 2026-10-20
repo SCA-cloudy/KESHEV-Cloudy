@@ -58,6 +58,216 @@ function decisionField(dl, label, value) {
   dl.append(decisionText('dt', label), decisionText('dd', value));
 }
 
+// 15단계: 기록 kind → 화면 문구. 공식 과제 안내(15단계) 예시(access=접속, xdr=XDR 경보)를 그대로 씁니다.
+const EVENT_KIND_TEXT = {
+  access: '접속',
+  xdr: 'XDR 경보',
+};
+// 15단계: state.access → 화면 문구. session·device는 13단계와 계약이 같아 위 상수를 그대로 재사용합니다.
+const EVENT_ACCESS_TEXT = {
+  allowed: '허용됨',
+  denied: '거부됨',
+  unknown: '확인 불가',
+};
+
+function eventsText(tag, text, className) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  node.textContent = text;
+  return node;
+}
+
+// 상세 화면의 세 상태(state.access/session/device) 공통 표시: "한국어 설명(원래 값)".
+// 목록에 없는 값은 unknown으로 다룬다(13·14단계와 같은 규칙).
+function eventStateText(map, value) {
+  const known = Object.hasOwn(map, value);
+  const label = known ? map[value] : '확인 불가';
+  const raw = known ? value : 'unknown';
+  return `${label}(${raw})`;
+}
+
+function eventAppText(appId) {
+  return typeof appId === 'string' && appId ? appId : '앱을 확인할 수 없음';
+}
+
+// at(ISO 시각 등 원래 값)을 한국 시각으로 읽을 수 있게 바꾸되, 해석할 수 없으면 원래 값을 그대로 쓴다.
+function eventTimeText(at) {
+  const date = new Date(at);
+  if (Number.isNaN(date.getTime())) return typeof at === 'string' && at ? at : '확인 불가';
+  return `${date.toLocaleString('ko-KR')} (${at})`;
+}
+
+// 선택한 기록 하나의 상세(evidence·rules·state)를 detail 컨테이너에 다시 그린다.
+// 호출될 때마다 이전 내용을 전부 지우고 새로 그리므로, 다른 기록을 고르면 옛 상세가 남지 않는다.
+function renderEventDetail(container, event) {
+  container.dataset.studentEventDetail = event.id;
+
+  const fields = document.createElement('dl');
+  fields.className = 'event-detail-fields';
+  fields.append(
+    eventsText('dt', '사건 ID'), eventsText('dd', event.id),
+    eventsText('dt', '업무 앱'), eventsText('dd', eventAppText(event.appId)),
+  );
+
+  const evidenceTitle = eventsText('h5', '근거(evidence)', 'event-detail-subtitle');
+  const evidenceList = document.createElement('ul');
+  evidenceList.className = 'event-evidence-list';
+  const evidence = Array.isArray(event.evidence) ? event.evidence : [];
+  if (evidence.length === 0) {
+    evidenceList.append(eventsText('li', '근거 정보 없음'));
+  } else {
+    for (const item of evidence) {
+      evidenceList.append(eventsText('li', `${item && item.id ? item.id : '확인 불가'} — ${item && typeof item.text === 'string' ? item.text : ''}`));
+    }
+  }
+
+  const rulesTitle = eventsText('h5', '규칙(rules)', 'event-detail-subtitle');
+  const rulesList = document.createElement('ul');
+  rulesList.className = 'event-rules-list';
+  const rules = Array.isArray(event.rules) ? event.rules : [];
+  if (rules.length === 0) {
+    rulesList.append(eventsText('li', '규칙 정보 없음'));
+  } else {
+    for (const item of rules) {
+      rulesList.append(eventsText('li', `${item && item.id ? item.id : '확인 불가'} — ${item && typeof item.text === 'string' ? item.text : ''}`));
+    }
+  }
+
+  const state = event.state && typeof event.state === 'object' ? event.state : {};
+  const stateDl = document.createElement('dl');
+  stateDl.className = 'event-detail-state';
+  stateDl.append(
+    eventsText('dt', '접속(access)'), eventsText('dd', eventStateText(EVENT_ACCESS_TEXT, state.access)),
+    eventsText('dt', '세션(session)'), eventsText('dd', eventStateText(SESSION_STATUS_TEXT, state.session)),
+    eventsText('dt', '기기(device)'), eventsText('dd', eventStateText(DEVICE_STATUS_TEXT, state.device)),
+  );
+
+  container.replaceChildren(fields, evidenceTitle, evidenceList, rulesTitle, rulesList, stateDl);
+}
+
+// 15단계 구현: student/extension.mjs → renderEvents. 13·14단계 함수는 그대로 둡니다.
+// 입력은 { status, mode, data?, error? }. data는 기록 배열이며, 필터·상세는 서버에 다시 묻지 않고
+// 이 배열 안에서만(DOM 조작으로) 처리한다.
+function renderEvents(input) {
+  const status = input && typeof input === 'object' ? input.status : undefined;
+  const root = document.createElement('div');
+  root.className = 'events-panel';
+
+  if (status === 'loading') {
+    root.append(eventsText('p', '불러오는 중', 'events-status events-status-loading'));
+    return root;
+  }
+
+  if (status === 'error') {
+    const error = input.error;
+    const message = error && typeof error.message === 'string' && error.message.trim() ? error.message : '서버에 연결하지 못했습니다.';
+    // 빈 목록과 다르게, "불러오지 못했다"는 것을 분명히 한다.
+    root.append(eventsText('p', `기록을 불러오지 못했습니다: ${message}`, 'events-status events-status-error'));
+    return root;
+  }
+
+  if (status === 'ok' && Array.isArray(input.data)) {
+    // 원본 배열은 건드리지 않고 복사해서 정렬한다.
+    const events = input.data.slice().sort((a, b) => new Date(b && b.at).getTime() - new Date(a && a.at).getTime());
+
+    if (events.length === 0) {
+      root.append(eventsText('p', '표시할 기록이 없습니다', 'events-status events-status-empty'));
+      return root;
+    }
+
+    const detail = document.createElement('div');
+    detail.className = 'event-detail';
+    detail.append(eventsText('p', '목록에서 기록을 선택하면 상세가 여기에 표시됩니다.', 'event-detail-placeholder'));
+
+    const list = document.createElement('ul');
+    list.className = 'events-list';
+
+    const rows = events.map((event) => {
+      const li = document.createElement('li');
+      li.className = 'event-row';
+      li.dataset.studentEventId = event.id;
+      li.dataset.kind = event.kind;
+      li.dataset.appId = typeof event.appId === 'string' ? event.appId : '';
+      li.dataset.access = event.state && typeof event.state.access === 'string' ? event.state.access : '';
+
+      const kindLabel = Object.hasOwn(EVENT_KIND_TEXT, event.kind) ? EVENT_KIND_TEXT[event.kind] : event.kind;
+      li.append(
+        eventsText('span', event.id, 'event-id'),
+        eventsText('span', eventTimeText(event.at), 'event-time'),
+        eventsText('span', kindLabel, 'event-kind'),
+        eventsText('span', eventAppText(event.appId), 'event-app'),
+        eventsText('span', typeof event.summary === 'string' ? event.summary : '', 'event-summary'),
+      );
+
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'event-detail-button';
+      button.textContent = `${event.id} 상세`;
+      button.addEventListener('click', () => renderEventDetail(detail, event));
+      li.append(button);
+
+      return li;
+    });
+
+    for (const row of rows) list.append(row);
+
+    // 필터 셀렉트 3개: 값은 받은 원래 kind·appId·state.access 값으로 채우고, 배열 안에서만 걸러낸다.
+    const filterBar = document.createElement('div');
+    filterBar.className = 'events-filters';
+
+    const makeFilter = (labelText, rawValues, toOptionText) => {
+      const label = document.createElement('label');
+      label.className = 'events-filter';
+      label.append(eventsText('span', labelText));
+      const select = document.createElement('select');
+      const allOption = eventsText('option', '전체', '');
+      allOption.value = 'all';
+      select.append(allOption);
+      for (const value of rawValues) {
+        const option = eventsText('option', toOptionText(value), '');
+        option.value = value;
+        select.append(option);
+      }
+      label.append(select);
+      filterBar.append(label);
+      // 기본값은 항상 "전체"(all)여야 필터를 건드리기 전에 모든 행이 보인다.
+      select.value = 'all';
+      return select;
+    };
+
+    const kindValues = [...new Set(rows.map((row) => row.dataset.kind))];
+    const appValues = [...new Set(rows.map((row) => row.dataset.appId))];
+    const accessValues = [...new Set(rows.map((row) => row.dataset.access))];
+
+    const kindSelect = makeFilter('기록 종류', kindValues, (v) => (Object.hasOwn(EVENT_KIND_TEXT, v) ? `${EVENT_KIND_TEXT[v]}(${v})` : v));
+    const appSelect = makeFilter('업무 앱', appValues, (v) => (v ? v : '앱을 확인할 수 없음'));
+    const accessSelect = makeFilter('접속 상태', accessValues, (v) => eventStateText(EVENT_ACCESS_TEXT, v));
+
+    const applyFilters = () => {
+      const kindValue = kindSelect.value;
+      const appValue = appSelect.value;
+      const accessValue = accessSelect.value;
+      for (const row of rows) {
+        const matches = (kindValue === 'all' || row.dataset.kind === kindValue)
+          && (appValue === 'all' || row.dataset.appId === appValue)
+          && (accessValue === 'all' || row.dataset.access === accessValue);
+        row.hidden = !matches;
+      }
+    };
+    kindSelect.addEventListener('change', applyFilters);
+    appSelect.addEventListener('change', applyFilters);
+    accessSelect.addEventListener('change', applyFilters);
+
+    root.append(filterBar, list, detail);
+    return root;
+  }
+
+  // 계약에 없는 status 값이거나 ok인데 data가 배열이 아님(예: CONTRACT_MISMATCH 등 깨진 자료):
+  // 추측해서 새 상태를 만들지 않고 확인 불가로만 보여준다. 이전 목록은 남기지 않는다.
+  root.append(eventsText('p', '확인 불가: 응답 상태를 확인할 수 없습니다.', 'events-status'));
+  return root;
+}
+
 // 13단계 구현: student/extension.mjs → renderIdentity.
 // 입력은 { me, devices, sessions }이지만, 13단계 공식 과제 안내는 me(현재 사용자·기기 1개·세션 1개)만으로
 // 화면을 채우도록 정하고 있어 devices·sessions는 이번 단계에서는 읽지 않는다(이후 단계에서 쓸 입력).
@@ -170,7 +380,7 @@ export function createStudentView() {
   return {
     renderIdentity,
     renderDecision,
-    renderEvents() { return '학생 구현 대기: 본인 접속·XDR 기록을 연결하세요.'; },
+    renderEvents,
     renderStatus() { return '학생 구현 대기: 기기·세션·알림과 연결 점검 상태를 구분하세요.'; },
     renderVulnerabilities() { return '학생 구현 대기: 정확한 설치 버전·OSV 출처·조회 시각·부분 결과·조회 실패를 구분하세요.'; },
     renderAiConnection() { return '학생 구현 대기: 모델 응답 점검과 실제 사건 설명을 구분하고 AI 오류·취소·수동 복구를 안내하세요.'; },
