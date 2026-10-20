@@ -454,7 +454,9 @@ function renderDiagnosticsSection(diagnostics) {
     section.append(statusText('p', '확인 불가: 응답 상태를 확인할 수 없습니다.', 'status-line'));
   }
 
-  section.append(copyButton, copyStatus);
+  // 공식 요구사항(diagnostics_redaction): 이 정보가 도움 요청에 쓰도록 복사하는 것이라는 용도 안내.
+  const copyPurpose = statusText('p', '문제 해결을 위해 담당자에게 도움을 요청할 때 복사하는 정보입니다.', 'status-diagnostics-copy-purpose');
+  section.append(copyPurpose, copyButton, copyStatus);
   return section;
 }
 
