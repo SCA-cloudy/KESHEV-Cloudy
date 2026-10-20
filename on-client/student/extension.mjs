@@ -410,7 +410,10 @@ function renderDiagnosticsSection(diagnostics) {
 
   const copyStatus = statusText('p', '', 'status-diagnostics-copy-status');
 
-  if (resource.status === 'loading') {
+  if (resource.status === 'idle') {
+    // 진단 정보는 제공 화면의 "도움정보 불러오기" 버튼을 눌러야 조회된다(자동 조회 아님). 아직 안 누른 상태.
+    section.append(statusText('p', '아직 불러오지 않음: 위 "도움정보 불러오기" 버튼을 눌러 조회하세요.', 'status-line status-line-empty'));
+  } else if (resource.status === 'loading') {
     section.append(statusText('p', '불러오는 중', 'status-line status-line-loading'));
   } else if (resource.status === 'error') {
     section.append(statusText('p', statusErrorText('도움정보', resource.error), 'status-line status-line-error'));
