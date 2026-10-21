@@ -627,6 +627,10 @@ function aiConnectionField(dl, label, value) {
   dl.append(aiConnectionText('dt', label), aiConnectionText('dd', value));
 }
 
+// 공식 요구사항(ai_manual_recovery): "자동으로 다시 점검하지 않는다"는 사실과 "재점검은 사람이 버튼을
+// 직접 눌러야 한다"는 안내를 취소 상태뿐 아니라 idle·성공·일반 오류 화면에도 공통으로 보여준다.
+const AI_MANUAL_RECHECK_NOTE = '자동으로 다시 점검하지 않습니다. 필요하면 "현재 API 연결 점검" 버튼을 직접 누르세요.';
+
 function renderAiConnection(input) {
   const safeInput = input && typeof input === 'object' ? input : {};
   const status = safeInput.status;
@@ -634,7 +638,10 @@ function renderAiConnection(input) {
   root.className = 'ai-connection-panel';
 
   if (status === 'idle') {
-    root.append(aiConnectionText('p', 'AI 연결 점검 전', 'ai-connection-state ai-connection-idle'));
+    root.append(
+      aiConnectionText('p', 'AI 연결 점검 전', 'ai-connection-state ai-connection-idle'),
+      aiConnectionText('p', AI_MANUAL_RECHECK_NOTE, 'ai-connection-manual-note'),
+    );
     return root;
   }
 
@@ -654,6 +661,7 @@ function renderAiConnection(input) {
       aiConnectionText('p', `AI 연결 점검 실패 (${code})`, 'ai-connection-state ai-connection-error'),
       aiConnectionText('p', message, 'ai-connection-error-message'),
       aiConnectionText('p', guide, 'ai-connection-error-guide'),
+      aiConnectionText('p', AI_MANUAL_RECHECK_NOTE, 'ai-connection-manual-note'),
     );
     return root;
   }
@@ -676,7 +684,10 @@ function renderAiConnection(input) {
     aiConnectionField(dl, '점검 시각', checkedAt);
     root.append(dl);
     // 공식 요구사항: 모델 목록 응답만으로 사건 설명까지 된 것처럼 보이면 안 된다.
-    root.append(aiConnectionText('p', '이 점검은 연결만 확인했습니다. 사건 설명은 아직 실행하지 않았습니다.', 'ai-connection-note'));
+    root.append(
+      aiConnectionText('p', '이 점검은 연결만 확인했습니다. 사건 설명은 아직 실행하지 않았습니다.', 'ai-connection-note'),
+      aiConnectionText('p', AI_MANUAL_RECHECK_NOTE, 'ai-connection-manual-note'),
+    );
     return root;
   }
 
