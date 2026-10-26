@@ -974,13 +974,136 @@ function renderAction(input) {
   return finish('확인 불가: 조치 상태를 확인할 수 없습니다.', 'action-error');
 }
 
+function vulnText(tag, text, className) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  node.textContent = text;
+  return node;
+}
+
+const SCAN_STATUS_TEXT = {
+  complete: '모두 조회(complete)',
+  partial: '일부 조회 실패(partial)',
+  not_checked: '아직 조회 안 함(not_checked)',
+  not_configured: '조회 준비 미완료(not_configured)',
+  unverifiable: 'lock 파일 확인 불가(unverifiable)',
+};
+
+const PACKAGE_STATUS_TEXT = {
+  known_vulnerabilities: '알려진 취약점 있음(known_vulnerabilities)',
+  none_found: '알려진 취약점 없음(none_found)',
+};
+
+// 패키지 한 줄: 받은 name·version·status·source·checkedAt과, 있으면 취약점 id·modified를 그대로 보여준다.
+// 조회 실패를 "취약점 없음"으로 보이게 하지 않는다.
+function vulnPackageRow(pkg) {
+  const row = document.createElement('li');
+  row.className = 'vulnerability-package';
+  row.dataset.studentPackageName = pkg.name;
+  row.dataset.studentPackageVersion = pkg.version;
+  const vulnerabilities = Array.isArray(pkg.vulnerabilities) ? pkg.vulnerabilities : [];
+  let statusLabel;
+  if (pkg.status === 'unverifiable') {
+    // unverifiable인데 이미 받은 취약점이 있으면 지우지 않고, 일부만 확인됐고 전체 조회는 확인 불가라는 걸 알린다.
+    statusLabel = vulnerabilities.length > 0
+      ? '일부 확인 · 전체 조회 확인 불가(unverifiable)'
+      : '조회 확인 불가(unverifiable)';
+  } else {
+    statusLabel = PACKAGE_STATUS_TEXT[pkg.status] || `확인 불가(${pkg.status})`;
+  }
+  row.append(
+    vulnText('p', `${pkg.name}@${pkg.version} — ${statusLabel}`, 'vulnerability-package-head'),
+    vulnText('p', `출처: ${typeof pkg.source === 'string' && pkg.source ? pkg.source : '확인 불가'} · 확인 시각: ${typeof pkg.checkedAt === 'string' && pkg.checkedAt ? pkg.checkedAt : '확인 불가'}`, 'vulnerability-package-meta'),
+  );
+  if (vulnerabilities.length > 0) {
+    const list = document.createElement('ul');
+    list.className = 'vulnerability-findings-list';
+    for (const finding of vulnerabilities) {
+      if (finding && typeof finding.id === 'string' && finding.id) {
+        list.append(vulnText('li', `${finding.id} — 수정 시각 ${typeof finding.modified === 'string' && finding.modified ? finding.modified : '확인 불가'}`));
+      }
+    }
+    row.append(list);
+  }
+  return row;
+}
+
+// 20단계: 설치된 정확한 패키지 버전과 OSV 취약점 조회 결과를, 출처·확인 시각·실패·미조회를 구분해서 보여준다.
+function renderVulnerabilities(input) {
+  const safeInput = input && typeof input === 'object' ? input : {};
+  const status = typeof safeInput.status === 'string' ? safeInput.status : null;
+  const root = document.createElement('div');
+  root.className = 'vulnerabilities-panel';
+
+  if (status === 'idle') {
+    root.append(vulnText('p', '조회 전', 'vulnerabilities-state vulnerabilities-idle'));
+    return root;
+  }
+
+  if (status === 'loading') {
+    // 조회 중에는 이전 표를 현재 결과처럼 남기지 않는다(함수가 매번 입력만으로 새로 그림).
+    root.append(vulnText('p', '조회 중', 'vulnerabilities-state vulnerabilities-loading'));
+    return root;
+  }
+
+  if (status === 'error') {
+    const error = safeInput.error && typeof safeInput.error === 'object' ? safeInput.error : {};
+    const code = typeof error.code === 'string' && error.code ? error.code : '확인불가';
+    const message = typeof error.message === 'string' && error.message ? error.message : '오류 내용을 확인할 수 없습니다.';
+    // 오류일 때도 이전 표를 남기지 않는다.
+    root.append(
+      vulnText('p', `조회 실패 (${code}): ${message}`, 'vulnerabilities-state vulnerabilities-error'),
+      vulnText('p', '이전 결과는 현재 조회 결과가 아닙니다.', 'vulnerabilities-note'),
+    );
+    return root;
+  }
+
+  if (status === 'ok') {
+    const data = safeInput.data && typeof safeInput.data === 'object' ? safeInput.data : null;
+    if (!data || typeof data.status !== 'string') {
+      root.append(vulnText('p', '확인 불가: 조회 결과 형식을 확인할 수 없습니다.', 'vulnerabilities-state vulnerabilities-error'));
+      return root;
+    }
+    const scanLabel = SCAN_STATUS_TEXT[data.status] || `확인 불가(${data.status})`;
+    root.append(vulnText('p', scanLabel, 'vulnerabilities-state vulnerabilities-ok'));
+    // 전달된 경우에만 lockfileVersion·lockfileHash·checkedAt을 보여준다(설정·확인 불가일 때는 없을 수 있음).
+    if (data.lockfileVersion !== undefined && data.lockfileVersion !== null) {
+      root.append(vulnText('p', `잠금 파일 버전: ${data.lockfileVersion}`, 'vulnerabilities-lockfile'));
+    }
+    if (typeof data.lockfileHash === 'string' && data.lockfileHash) {
+      root.append(vulnText('p', `잠금 파일 해시: ${data.lockfileHash}`, 'vulnerabilities-lockfile'));
+    }
+    if (typeof data.checkedAt === 'string' && data.checkedAt) {
+      root.append(vulnText('p', `조회 시각: ${data.checkedAt}`, 'vulnerabilities-checked-at'));
+    }
+    const packages = Array.isArray(data.packages) ? data.packages : [];
+    if (packages.length === 0) {
+      root.append(vulnText('p', '표시할 설치 패키지가 없습니다.', 'vulnerabilities-empty'));
+    } else {
+      const list = document.createElement('ul');
+      list.className = 'vulnerabilities-package-list';
+      for (const pkg of packages) {
+        if (pkg && typeof pkg === 'object' && typeof pkg.name === 'string' && pkg.name && typeof pkg.version === 'string' && pkg.version) {
+          list.append(vulnPackageRow(pkg));
+        }
+      }
+      root.append(list);
+    }
+    return root;
+  }
+
+  // 계약에 없는 status 값: 추측해서 새 상태를 만들지 않고 확인 불가로만 보여준다.
+  root.append(vulnText('p', '확인 불가: 조회 상태를 확인할 수 없습니다.', 'vulnerabilities-state vulnerabilities-error'));
+  return root;
+}
+
 export function createStudentView() {
   return {
     renderIdentity,
     renderDecision,
     renderEvents,
     renderStatus,
-    renderVulnerabilities() { return '학생 구현 대기: 정확한 설치 버전·OSV 출처·조회 시각·부분 결과·조회 실패를 구분하세요.'; },
+    renderVulnerabilities,
     renderAiConnection,
     renderExplanation,
     renderAction,
