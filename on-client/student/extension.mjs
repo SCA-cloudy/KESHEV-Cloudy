@@ -845,6 +845,135 @@ function renderExplanation(input) {
   return root;
 }
 
+function actionText(tag, text, className) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  node.textContent = text;
+  return node;
+}
+
+// 현재 사건·근거 ID·조치·실제 대상·요청/영수증 ID를 "있는 것만" 글자로 나열한다. 없으면 null.
+function actionIdentifiersList(input) {
+  const items = [];
+  const event = input.event && typeof input.event === 'object' ? input.event : null;
+  if (event && typeof event.id === 'string' && event.id) items.push(`사건 ID: ${event.id}`);
+  if (event && Array.isArray(event.evidence) && event.evidence.length > 0) {
+    const ids = event.evidence.map((e) => e && e.id).filter((id) => typeof id === 'string' && id);
+    if (ids.length > 0) items.push(`근거 ID: ${ids.join(', ')}`);
+  }
+  if (typeof input.actionId === 'string' && input.actionId) items.push(`조치: ${input.actionId}`);
+  const target = input.target && typeof input.target === 'object' ? input.target : null;
+  if (target && typeof target.id === 'string' && target.id) {
+    items.push(`실제 대상: ${target.id}${Number.isSafeInteger(target.generation) ? ` · 세대 ${target.generation}` : ''}`);
+  }
+  const receipt = input.receipt && typeof input.receipt === 'object' ? input.receipt : null;
+  if (receipt) {
+    if (typeof receipt.requestId === 'string' && receipt.requestId) items.push(`요청 ID: ${receipt.requestId}`);
+    if (typeof receipt.receiptId === 'string' && receipt.receiptId) items.push(`영수증 ID: ${receipt.receiptId}`);
+    if (Number.isSafeInteger(receipt.version)) items.push(`버전: ${receipt.version}`);
+  }
+  if (items.length === 0) return null;
+  const list = document.createElement('ul');
+  list.className = 'action-identifiers-list';
+  for (const text of items) list.append(actionText('li', text));
+  return list;
+}
+
+// 19단계: AI 제안·사람 확인·서버 접수(ACK)·실제 효과 확인을 구분해서 보여준다. ACK는 효과가 아니고,
+// succeeded도 observation.effectApplied===true일 때만 효과 확인으로 인정한다. 조치 버튼은 만들지 않는다.
+function renderAction(input) {
+  const safeInput = input && typeof input === 'object' ? input : {};
+  const status = typeof safeInput.status === 'string' ? safeInput.status : null;
+  const root = document.createElement('div');
+  root.className = 'action-panel';
+
+  // "성공적으로 그린" 바깥 요소에 현재 사건·요청 ID를 붙인다(있을 때만, 상태와 무관하게 공식 계약대로).
+  const event = safeInput.event && typeof safeInput.event === 'object' ? safeInput.event : null;
+  if (event && typeof event.id === 'string' && event.id) root.dataset.studentActionEvent = event.id;
+  const receipt = safeInput.receipt && typeof safeInput.receipt === 'object' ? safeInput.receipt : null;
+  if (receipt && typeof receipt.requestId === 'string' && receipt.requestId) root.dataset.studentActionRequest = receipt.requestId;
+
+  const identifiers = actionIdentifiersList(safeInput);
+  function finish(stateText, stateClass, extraNodes) {
+    root.append(actionText('p', stateText, `action-state ${stateClass}`));
+    if (identifiers) root.append(identifiers);
+    if (Array.isArray(extraNodes)) for (const node of extraNodes) if (node) root.append(node);
+    return root;
+  }
+
+  if (status === 'error') {
+    const error = safeInput.error && typeof safeInput.error === 'object' ? safeInput.error : {};
+    const code = typeof error.code === 'string' && error.code ? error.code : '확인불가';
+    const message = typeof error.message === 'string' && error.message ? error.message : '오류 내용을 확인할 수 없습니다.';
+    return finish(`요청이 처리되지 않았습니다 (${code}): ${message}`, 'action-error');
+  }
+
+  if (status === 'idle') {
+    return finish('아직 미실행', 'action-idle');
+  }
+
+  if (status === 'loading') {
+    return finish('조치 준비 또는 결과 조회 중(loading) · 아직 결과가 아닙니다.', 'action-loading');
+  }
+
+  if (status === 'prepared') {
+    const expiryText = typeof safeInput.confirmationExpiresAt === 'string' && safeInput.confirmationExpiresAt
+      ? `사람 확인 기한: ${safeInput.confirmationExpiresAt}`
+      : '사람 확인 기한을 확인할 수 없습니다.';
+    return finish('준비됨 · 미실행(prepared)', 'action-prepared', [
+      actionText('p', expiryText, 'action-expiry'),
+      actionText('p', '진행하려면 화면의 "대상과 조치를 확인했으며 집행합니다" 버튼을, 그만두려면 "조치 화면 취소" 버튼을 쓰세요.', 'action-note'),
+    ]);
+  }
+
+  if (status === 'executing') {
+    return finish('서버에 전달 중(executing) · 결과가 아직 확인되지 않았습니다.', 'action-executing');
+  }
+
+  if (status === 'pending') {
+    return finish('서버 접수·처리 중(pending) · 서버가 받았다는 것(ACK)은 효과가 아닙니다.', 'action-pending', [
+      actionText('p', '결과를 확인하려면 "연동 시스템 결과만 재조회" 버튼을 쓰세요.', 'action-note'),
+    ]);
+  }
+
+  if (status === 'succeeded') {
+    const observation = safeInput.observation && typeof safeInput.observation === 'object' ? safeInput.observation : null;
+    if (observation && observation.effectApplied === true && typeof observation.observedAt === 'string' && observation.observedAt) {
+      const receiptId = receipt && typeof receipt.receiptId === 'string' && receipt.receiptId ? receipt.receiptId : null;
+      return finish('효과 확인(succeeded)', 'action-succeeded', [
+        actionText('p', `관측 시각: ${observation.observedAt}`, 'action-observed-at'),
+        actionText('p', 'effectApplied: true', 'action-effect-applied'),
+        receiptId ? actionText('p', `영수증 ID: ${receiptId}`, 'action-receipt-id') : null,
+      ]);
+    }
+    // 서버 상태가 succeeded여도 effectApplied가 true가 아니면 성공으로 보여주지 않고 결과 불명으로 처리한다.
+    return finish('결과 불명(unknown) · 효과 없음으로도 성공으로도 판단하지 마세요. 결과를 다시 조회하세요.', 'action-unknown', [
+      actionText('p', '"연동 시스템 결과만 재조회" 버튼으로 결과를 다시 확인하세요.', 'action-note'),
+    ]);
+  }
+
+  if (status === 'denied' || status === 'failed') {
+    const label = status === 'denied' ? '연동 시스템이 거절했습니다(denied)' : '연동 시스템 처리가 실패했습니다(failed)';
+    const message = typeof safeInput.message === 'string' && safeInput.message ? safeInput.message : '사유를 확인할 수 없습니다.';
+    return finish(`${label}: ${message}`, 'action-denied-failed');
+  }
+
+  if (status === 'unknown') {
+    return finish('결과 불명(unknown) · 효과 없음으로도 성공으로도 판단하지 마세요. 결과를 다시 조회하세요.', 'action-unknown', [
+      actionText('p', '"연동 시스템 결과만 재조회" 버튼으로 결과를 다시 확인하세요.', 'action-note'),
+    ]);
+  }
+
+  if (status === 'expired') {
+    return finish('사람 확인 기한이 지났습니다(expired) · 이번 준비로는 집행할 수 없습니다. 다시 준비하세요.', 'action-expired', [
+      actionText('p', '"조치 화면 취소" 버튼으로 정리한 뒤, AI 제안에서 조치를 다시 준비하세요.', 'action-note'),
+    ]);
+  }
+
+  // 계약에 없는 status 값: 추측해서 새 상태를 만들지 않고 확인 불가로만 보여준다.
+  return finish('확인 불가: 조치 상태를 확인할 수 없습니다.', 'action-error');
+}
+
 export function createStudentView() {
   return {
     renderIdentity,
@@ -854,6 +983,6 @@ export function createStudentView() {
     renderVulnerabilities() { return '학생 구현 대기: 정확한 설치 버전·OSV 출처·조회 시각·부분 결과·조회 실패를 구분하세요.'; },
     renderAiConnection,
     renderExplanation,
-    renderAction() { return '학생 구현 대기: 현재 사건·조치·실제 대상·사람 확인·ACK와 원천 효과·unknown을 구분하세요.'; },
+    renderAction,
   };
 }
