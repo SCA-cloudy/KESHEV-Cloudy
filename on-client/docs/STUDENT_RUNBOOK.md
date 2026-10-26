@@ -76,7 +76,8 @@ http://127.0.0.1:5189/
     │
     ├─ GET /api/me, /api/apps, /api/events, /api/devices, /api/sessions
     │     └─▶ [엔진 어댑터]  src/engine.mjs
-    │             ├─ 기본: demoEngine() (예제 자료, 사건 1건 고정)
+    │             ├─ 기본(옵션 없이 실행): disconnected (연결 없음, 아무 기록도 안 줌 — src/engine.mjs의 loadEngine은 경로가 없으면 {evidenceMode:'disconnected'}를 바로 반환)
+    │             ├─ --demo 지정 시: demoEngine() (예제 자료, 사건 1건 고정 — src/server.mjs가 demo 플래그일 때만 이 엔진을 고름)
     │             └─ --sdp-host-config 지정 시: student/engine-adapter.mjs
     │                     └─▶ [접근 제어·XDR 시스템(SDP 호스트)] — 담당자가 구성, 학생이 직접 만들지 않음
     │
@@ -95,7 +96,8 @@ http://127.0.0.1:5189/
 flowchart LR
   Browser["브라우저<br/>public/index.html · app.js"] -->|HTTP GET/POST /api/*| Server["로컬 앱 서버<br/>src/server.mjs (ON_PORT, 기본 5189)"]
   Server -->|readIdentity/readApps/readEvents/readDevices/readSessions/decideAccess| Engine["엔진 어댑터<br/>src/engine.mjs"]
-  Engine -->|기본| Demo["demoEngine()<br/>예제 자료"]
+  Engine -->|기본 · 옵션 없음| Disconnected["disconnected<br/>연결 없음"]
+  Engine -->|--demo 지정 시만| Demo["demoEngine()<br/>예제 자료"]
   Engine -->|--sdp-host-config 지정 시만| Adapter["student/engine-adapter.mjs"]
   Adapter --> SDP["접근 제어·XDR 시스템(SDP 호스트)<br/>담당자 구성"]
   Server -->|GET /api/vulnerabilities| Scan["src/vulnerabilities/*"]
@@ -126,7 +128,7 @@ flowchart LR
 | 보안 기록 | 학생 AI 사건 설명 | 학생 | `renderExplanation` (18단계) |
 | 보안 기록 | 학생 조치 상태 표시 | 학생 | `renderAction` (19단계) |
 
-제공 코드 경계: 실제 서버 요청(`fetch`/`POST`), 입력 검증(`public/app.js`의 `validExplanation`, `safeActionData`, `public/vulnerabilities-view.mjs`의 `normalizeScan` 등), 버튼 클릭 처리(`AI 설명 요청`, `대상과 조치를 확인했으며 집행합니다` 등)는 전부 제공 코드가 담당합니다. 학생 코드(`student/extension.mjs`)는 제공 코드가 넘긴 값을 받아 **읽기 전용으로 화면을 그리기만** 하며, 새 요청을 만들거나 버튼을 추가하지 않습니다(17~20단계 전부 이 원칙으로 구현했습니다).
+제공 코드 경계: 서버로 보내는 실제 요청(`fetch`/`POST`), 입력 검증(`public/app.js`의 `validExplanation`, `safeActionData`, `public/vulnerabilities-view.mjs`의 `normalizeScan` 등), 서버 상태를 바꾸는 버튼(`AI 설명 요청`, `대상과 조치를 확인했으며 집행합니다` 등)은 전부 제공 코드가 담당합니다. 학생 코드(`student/extension.mjs`)는 화면 조작용 요소(예: `renderEvents`의 종류·업무 앱·접속 상태 필터 셀렉트 3개와 기록별 "상세" 버튼)를 직접 만들 수 있지만, 이 요소들은 **이미 제공 코드가 넘겨준 배열 안에서만 걸러보거나 상세를 펼쳐 보여주는 것**이고, 서버에 새 요청(`fetch`/`POST`)을 보내지 않습니다. 즉 학생 코드가 그릴 수 없는 것은 "화면 요소"가 아니라 "제공 코드를 거치지 않은 새 서버 요청"입니다(17~20단계 전부 이 원칙으로 구현했습니다).
 
 ## 6. 확인한 기능 / 오류별 확인 순서 / 미확인 기능
 
