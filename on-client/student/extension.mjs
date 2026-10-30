@@ -1254,56 +1254,186 @@ function pcHistoryRowText(entry) {
   return `${pcKst(entry.measuredAt)} · CPU ${cpu} · 메모리 사용률 ${memory} · 디스크 여유 ${disk}`;
 }
 
-function renderPcCheckSection(pc, history, onProbe) {
-  const section = document.createElement('div');
-  section.className = 'status-pc-check';
-  section.append(pcText('h4', '내 PC 점검 (내 코드로 조회)', 'status-heading'));
-  section.append(pcText('p', '버튼을 누를 때만 이 PC의 값을 한 번 읽습니다. 자동으로 다시 읽지 않으며, 읽은 값은 AI나 외부 서버로 보내지 않습니다.', 'status-line status-line-empty'));
+// 4일차(화면 다듬기): 「내 PC 점검」을 「학생 상태·알림 표시」의 맨 위로 올리고 핵심 3가지(① 내 PC 상태 ② 최근 기록 ③ 변화)를 먼저 보여 준다.
+// 제공 CSS는 고치지 않는다. 제공 스타일에 이미 있는 이름(btn, state, state-loading, state-empty, state-error, kv, plain-list, muted)과 제목 태그(h3)만 쓴다.
+const PC_BAR_WIDTH = 20;
+
+// 구역 사이를 가르는 장식 선(제공 스타일의 기본 hr).
+function pcDivider() {
+  const line = document.createElement('hr');
+  line.setAttribute('aria-hidden', 'true');
+  return line;
+}
+
+function pcClock(iso) {
+  const ms = typeof iso === 'string' ? Date.parse(iso) : NaN;
+  return Number.isFinite(ms) ? new Date(ms).toLocaleTimeString('ko-KR', { timeZone: 'Asia/Seoul' }) : '시각 확인 불가';
+}
+
+// 0~100 사이 값을 글자 막대로 그린다. 값이 없으면 막대를 만들지 않는다(호출하는 쪽에서 '확인 불가'로 쓴다).
+function pcBar(percent) {
+  const filled = Math.max(0, Math.min(PC_BAR_WIDTH, Math.round((percent / 100) * PC_BAR_WIDTH)));
+  return '█'.repeat(filled) + '░'.repeat(PC_BAR_WIDTH - filled);
+}
+
+function pcBarRow(entry) {
+  const cpu = entry.items[0].ok ? `CPU ${pcBar(entry.items[0].value)} ${entry.items[0].value.toFixed(1)}%` : 'CPU 확인 불가';
+  const memory = entry.items[1].ok ? `메모리 ${pcBar(entry.items[1].value)} ${entry.items[1].value.toFixed(1)}%` : '메모리 확인 불가';
+  const disk = entry.items[2].ok ? `디스크 여유 ${pcGb(entry.items[2].value)}` : '디스크 확인 불가';
+  return `${pcClock(entry.measuredAt)} · ${cpu} · ${memory} · ${disk}`;
+}
+
+// 조회가 안 됐을 때 "무엇이 안 됐는지"와 "다음에 할 일"을 정한다. 원인을 모르면 모른다고 쓴다.
+function pcFailureGuide(pc) {
+  if (pc.status === 'unsupported') {
+    return {
+      title: '이 앱 판에서는 학생 코드의 PC 조회를 쓸 수 없습니다',
+      what: '서버가 학생 코드의 PC 조회(NOT_ALLOWED)를 허용하지 않았습니다. 이번에 읽은 값은 없습니다.',
+      steps: ['앱 폴더의 package.json에서 version이 0.2.21인지 확인합니다.', '위쪽 제공 카드 「내 PC 상태」의 「내 PC 확인」은 따로 쓸 수 있습니다.', '버전을 맞춘 뒤 「다시 조회」를 누릅니다.'],
+    };
+  }
+  if (pc.status === 'unverifiable') {
+    return {
+      title: '응답은 왔지만 형식을 확인하지 못했습니다',
+      what: '서버가 준 응답이 약속한 모양(aleph.on.pc-status.v1)과 달라서 값을 보여 주지 않습니다. 정상으로 간주하지 않았습니다.',
+      steps: ['「다시 조회」를 한 번 더 누릅니다.', '같은 결과가 반복되면 앱 서버 창에 오류가 찍혔는지 확인합니다.', '앱 폴더가 0.2.21인지 package.json으로 확인합니다.'],
+    };
+  }
+  if (pc.status === 'stale') {
+    return {
+      title: '측정 시각이 너무 오래된 값입니다',
+      what: `응답의 측정 시각(${pcKst(pc.measuredAt)})이 60초보다 오래되어 현재 값으로 쓰지 않습니다.`,
+      steps: ['「다시 조회」를 눌러 새로 읽습니다.', '계속 오래됨으로 나오면 PC의 시계와 앱 서버 창 상태를 확인합니다.'],
+    };
+  }
+  const code = typeof pc.code === 'string' ? pc.code : 'UNKNOWN_ERROR';
+  const detail = `(${code}${pc.message ? ` · ${pc.message}` : ''})`;
+  if (code === 'NETWORK_ERROR' || code === 'CLIENT_ERROR') {
+    return {
+      title: '앱 서버에 연결하지 못했습니다',
+      what: `이 화면이 앱 서버에서 PC 값을 받아 오지 못했습니다 ${detail}. 7개 항목(CPU·메모리·디스크·네트워크·방화벽·Windows 경고·오류) 모두 이번에는 읽지 못했습니다.`,
+      steps: ['앱을 켠 CMD 창이 아직 열려 있는지 확인합니다.', '꺼져 있으면 on-client 폴더에서 npm start를 다시 실행합니다.', '켜진 것을 확인한 뒤 이 화면에서 「다시 조회」를 누릅니다.'],
+    };
+  }
+  if (code === 'TIMEOUT') {
+    return {
+      title: '서버가 제때 응답하지 않았습니다',
+      what: `PC 값을 요청했지만 정해진 시간 안에 응답이 오지 않았습니다 ${detail}. 이번에 읽은 값은 없습니다.`,
+      steps: ['앱을 켠 CMD 창이 멈춰 있지 않은지 확인합니다.', '잠시 뒤 「다시 조회」를 한 번 누릅니다.', '계속 같으면 앱을 껐다가 on-client 폴더에서 npm start로 다시 켭니다.'],
+    };
+  }
+  if (code === 'INVALID_RESPONSE') {
+    return {
+      title: '서버 응답을 읽을 수 없었습니다',
+      what: `서버가 보낸 내용이 약속한 형식이 아니어서 값을 읽지 못했습니다 ${detail}. 정상으로 간주하지 않았습니다.`,
+      steps: ['「다시 조회」를 한 번 더 누릅니다.', '같은 결과가 반복되면 앱을 켠 CMD 창에 오류가 찍혔는지 확인합니다.', '앱 폴더가 0.2.21인지 package.json으로 확인합니다.'],
+    };
+  }
+  return {
+    title: 'PC 값을 불러오지 못했습니다',
+    what: `서버가 오류로 응답했거나 원인을 알 수 없습니다 ${detail}. 이번에 읽은 값은 없습니다.`,
+    steps: ['앱을 켠 CMD 창에 오류 메시지가 찍혔는지 확인합니다.', '「다시 조회」를 한 번 더 누릅니다.', '같은 오류가 반복되면 위 코드를 적어 두고 앱을 껐다가 npm start로 다시 켭니다.'],
+  };
+}
+
+function pcErrorScreen(pc, hasHistory) {
+  const guide = pcFailureGuide(pc);
+  const box = document.createElement('div');
+  box.className = 'state state-error status-pc-error';
+  box.setAttribute('role', 'alert');
+  box.append(pcText('strong', guide.title));
+  box.append(pcText('p', `무엇이 안 됐나: ${guide.what}`));
+  box.append(pcText('p', hasHistory ? '아래 최근 기록은 이전에 성공한 조회입니다. 이번 값이 아닙니다.' : '아직 성공한 조회가 없어서 아래 기록은 비어 있습니다.'));
+  box.append(pcText('p', '다음에 할 일:'));
+  const steps = document.createElement('ol');
+  guide.steps.forEach((step) => steps.append(pcText('li', step)));
+  box.append(steps);
+  return box;
+}
+
+// 버튼과 조회 상태 한 줄(또는 오류 화면)을 만든다. 읽는 동안에는 버튼을 잠시 막고 기다리는 중임을 보여 준다.
+function pcStatusArea(pc, onProbe, history) {
+  const area = document.createElement('div');
+  area.className = 'status-pc-check-area';
 
   const button = document.createElement('button');
   button.type = 'button';
-  button.className = 'status-pc-check-button';
+  button.className = 'btn status-pc-check-button';
   button.dataset.pcProbe = '1';
-  button.textContent = pc.status === 'loading' ? '조회 중…' : 'PC 값 조회';
+  button.textContent = pc.status === 'loading' ? '읽는 중…' : pc.status === 'idle' ? 'PC 값 조회' : '다시 조회';
   button.disabled = pc.status === 'loading';
   button.addEventListener('click', onProbe);
-  section.append(button);
+  area.append(button);
 
-  let line;
-  if (pc.status === 'idle') line = pcText('p', '아직 조회하지 않음: 위 "PC 값 조회" 버튼을 눌러 주세요.', 'status-line status-line-empty');
-  else if (pc.status === 'loading') line = pcText('p', '조회 중', 'status-line status-line-loading');
-  else if (pc.status === 'unsupported') line = pcText('p', '지원 없음: 이 앱 판은 학생 코드의 PC 조회를 허용하지 않습니다. 위쪽 「내 PC 상태」 카드를 이용하세요.', 'status-line status-line-error');
-  else if (pc.status === 'failed') line = pcText('p', `실패: PC 값을 불러오지 못했습니다 (${pc.code}${pc.message ? ` · ${pc.message}` : ''}). 이번 조회의 값은 없습니다(아래 기록은 이전에 성공한 조회입니다). 버튼을 다시 눌러 주세요.`, 'status-line status-line-error');
-  else if (pc.status === 'unverifiable') line = pcText('p', '확인 불가: 응답은 왔지만 형식을 확인하지 못해 값을 보여 주지 않습니다.', 'status-line status-line-error');
-  else if (pc.status === 'stale') line = pcText('p', `오래됨: 측정 시각 ${pcKst(pc.measuredAt)}이 60초보다 오래되어 현재 값으로 쓰지 않습니다. 버튼을 다시 눌러 주세요.`, 'status-line status-line-error');
-  else {
+  if (pc.status === 'idle') {
+    area.append(pcText('p', '아직 조회하지 않음: 「PC 값 조회」 버튼을 눌러 주세요.', 'state state-empty'));
+  } else if (pc.status === 'loading') {
+    const wait = pcText('p', '읽는 중입니다. 잠시 기다려 주세요. 끝나면 아래 값이 바뀝니다.', 'state state-loading');
+    wait.setAttribute('role', 'status');
+    area.append(wait);
+  } else if (pc.status === 'ok') {
     const measured = pc.items.filter((item) => item.ok).length;
     const unknown = pc.items.length - measured;
-    line = pcText('p', `조회 성공: 측정 시각 ${pcKst(pc.measuredAt)} · 항목 ${pc.items.length}개 중 실측 ${measured}개${unknown ? ` · 확인 불가 ${unknown}개` : ''}`, 'status-line');
+    const done = pcText('p', `조회 성공: 잰 시각 ${pcKst(pc.measuredAt)} · 항목 ${pc.items.length}개 중 실측 ${measured}개${unknown ? ` · 확인 불가 ${unknown}개` : ''}`, 'state state-empty');
+    done.setAttribute('role', 'status');
+    area.append(done);
+  } else {
+    area.append(pcErrorScreen(pc, history.length > 0));
   }
-  line.setAttribute('role', 'status');
-  section.append(line);
+  return area;
+}
 
+function renderPcCheckSection(pc, history, onProbe) {
+  const section = document.createElement('div');
+  section.className = 'status-pc-check';
+  section.setAttribute('aria-busy', pc.status === 'loading' ? 'true' : 'false');
+  section.append(pcText('h3', '내 PC 점검 (내 코드로 조회) · 핵심 3가지'));
+  section.append(pcText('p', '버튼을 누를 때만 이 PC의 값을 한 번 읽습니다. 자동으로 다시 읽지 않으며, 읽은 값은 AI나 외부 서버로 보내지 않습니다. 정상·안전을 판정하지 않고 읽은 값만 보여 줍니다.', 'muted'));
+  section.append(pcStatusArea(pc, onProbe, history));
+
+  // ① 내 PC 상태
+  section.append(pcDivider(), pcText('h3', '① 내 PC 상태'));
   if (pc.status === 'ok') {
-    const dl = document.createElement('dl');
-    dl.className = 'status-pc-check-fields';
+    const values = document.createElement('ul');
+    values.className = 'plain-list status-pc-check-fields';
     pc.items.forEach((item, index) => {
-      dl.append(pcText('dt', PC_ITEM_LABELS[index]), pcText('dd', item.text));
+      const row = document.createElement('li');
+      row.append(pcText('strong', PC_ITEM_LABELS[index]), pcText('span', item.text));
+      values.append(row);
     });
-    section.append(dl);
+    section.append(values);
+  } else {
+    const why = PC_STATUS_WORD[pc.status] || '값 없음';
+    section.append(pcText('p', `확인 불가 (${why}: 이번 조회에서 읽은 값이 없음)`, 'state state-empty'));
   }
 
-  section.append(pcText('h4', `최근 조회 기록 (최대 ${PC_HISTORY_LIMIT}번)`, 'status-heading'));
+  // ② 최근 기록
+  section.append(pcDivider(), pcText('h3', `② 최근 기록 (최근 조회 최대 ${PC_HISTORY_LIMIT}번)`));
   if (!history.length) {
-    section.append(pcText('p', '아직 성공한 조회가 없습니다.', 'status-line status-line-empty'));
+    section.append(pcText('p', '아직 성공한 조회가 없습니다.', 'state state-empty'));
   } else {
     const list = document.createElement('ul');
-    list.className = 'status-pc-check-history';
+    list.className = 'plain-list status-pc-check-history';
     history.forEach((entry) => list.append(pcText('li', pcHistoryRowText(entry))));
     section.append(list);
-    section.append(pcText('p', history.length > 1 ? pcCompareText(history[history.length - 2], history[history.length - 1]) : '직전 조회가 없어 비교할 수 없습니다.', 'status-line'));
+    section.append(pcText('p', history.length > 1 ? pcCompareText(history[history.length - 2], history[history.length - 1]) : '직전 조회가 없어 비교할 수 없습니다.'));
   }
-  section.append(pcText('p', '기록은 이 화면을 연 동안만 메모리에 있고, 새로고침하면 사라집니다. 크기는 1024 기준(Windows와 같은 방식)으로 계산합니다. 관찰한 값일 뿐 정상·안전 판정이 아닙니다.', 'status-line status-line-empty'));
+  const events = pc.status === 'ok' ? pc.links[2].text : '확인 불가 (이번 조회에서 읽은 값이 없음)';
+  section.append(pcText('p', `Windows 경고·오류: ${events}`));
+  section.append(pcText('p', '「보안 기록」 탭의 기록은 제공 화면 그대로이며 여기서 바꾸지 않았습니다.', 'muted'));
+
+  // ③ 변화
+  section.append(pcDivider(), pcText('h3', '③ 변화 (내가 조회한 순서)'));
+  if (!history.length) {
+    section.append(pcText('p', '조회를 2번 이상 하면 값이 어떻게 변했는지 막대로 비교할 수 있습니다.', 'state state-empty'));
+  } else {
+    const bars = document.createElement('ul');
+    bars.className = 'plain-list status-pc-check-bars';
+    history.forEach((entry) => bars.append(pcText('li', pcBarRow(entry))));
+    section.append(bars);
+    if (history.length === 1) section.append(pcText('p', '지금은 조회가 1번뿐이라 변화는 아직 볼 수 없습니다.', 'muted'));
+  }
+  section.append(pcText('p', `막대는 사용률 0~100%를 ${PC_BAR_WIDTH}칸으로 줄여 그린 것이고(█ 사용, ░ 남음), 내가 조회 버튼을 누른 시점의 값입니다. 일정한 간격의 그래프가 아니며, 새로고침하면 사라집니다. 크기는 1024 기준(Windows와 같은 방식)입니다.`, 'muted'));
   return section;
 }
 
@@ -1384,7 +1514,8 @@ export function createStudentView({ api, onChange } = {}) {
     renderEvents,
     renderStatus(input) {
       const root = renderStatus(input);
-      root.append(renderPcCheckSection(pc, pcHistory, probePc), renderPcLinkSection(pc, input && typeof input === 'object' ? input.mode : undefined));
+      // 4일차: 핵심 3가지가 먼저 보이도록 내 PC 점검과 연결·기록을 맨 위에 둔다(기존 기기·세션·알림은 그 아래).
+      root.prepend(renderPcCheckSection(pc, pcHistory, probePc), renderPcLinkSection(pc, input && typeof input === 'object' ? input.mode : undefined));
       return root;
     },
     renderVulnerabilities,
