@@ -1097,12 +1097,223 @@ function renderVulnerabilities(input) {
   return root;
 }
 
-export function createStudentView() {
+// 2일차(마지막 총공세) 구현: 내 PC 점검. 앞 단계 함수는 그대로 두고 renderStatus 아래에 구역 하나를 덧붙인다.
+// - 측정은 제공된 /api/pc/status 조회를 그대로 쓴다(CPU·메모리·디스크를 다시 측정하지 않는다). 내가 더한 것은 "최근 조회 비교" 한 가지다.
+// - 이 구역은 CPU 사용률·메모리 사용량·디스크 남은 공간 세 가지만 다룬다(방화벽·기록·네트워크는 위쪽 제공 카드에서 본다).
+// - 제공 앱이 넘겨 주는 api.get('/api/pc/status')만 쓴다(직접 fetch·새 주소·저장소 사용 없음).
+// - 사용자가 버튼을 누를 때만 한 번 읽는다. 그리기나 onChange에서 읽지 않고 자동으로 되풀이하지 않는다.
+// - 값이 없거나 못 읽은 항목은 0이나 정상이 아니라 "확인 불가"와 이유로 보여 준다. 안전·정상 판정은 하지 않는다.
+// - 최근 조회 기록은 이 화면의 메모리에만 두며 새로고침하면 사라진다(브라우저 저장소를 쓰지 않는다).
+const PC_PATH = '/api/pc/status';
+const PC_SCHEMA = 'aleph.on.pc-status.v1';
+const PC_MAX_AGE_MS = 60000;
+const PC_HISTORY_LIMIT = 5;
+const PC_ITEM_LABELS = ['CPU 사용률', '메모리 사용량', '디스크 남은 공간'];
+const PC_REASON_TEXT = {
+  permission_denied: '권한 부족',
+  query_failed: '조회 실패',
+  timeout: '시간 초과',
+  unsupported: '이 PC에서는 지원하지 않음',
+  cancelled: '취소됨',
+  invalid_response: '응답 형식을 확인할 수 없음',
+  invalid_sample: '측정값을 확인할 수 없음',
+};
+
+function pcText(tag, text, className) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  node.textContent = text;
+  return node;
+}
+
+function pcIsNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+function pcIsCount(value) {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+// 서버가 준 단위는 바이트다. Windows가 쓰는 1024 기준(GiB)으로 계산하고 화면에도 그렇게 적는다.
+function pcGb(bytes) {
+  return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+}
+
+function pcKst(iso) {
+  const ms = typeof iso === 'string' ? Date.parse(iso) : NaN;
+  return Number.isFinite(ms) ? `${new Date(ms).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' })} (한국 시간)` : '시각 확인 불가';
+}
+
+// 한 항목을 읽는다. 읽을 수 있으면 { ok: true, text, value }, 아니면 { ok: false, text: '확인 불가 (이유)' }.
+function pcUnknown(metric) {
+  const reason = metric && typeof metric.reason === 'string' ? (PC_REASON_TEXT[metric.reason] || metric.reason) : '응답에 값이 없음';
+  return { ok: false, text: `확인 불가 (${reason})`, value: null };
+}
+
+function pcReadCpu(metric) {
+  if (metric && metric.state === 'ok' && pcIsNumber(metric.usagePercent) && metric.usagePercent <= 100) {
+    return { ok: true, text: `${metric.usagePercent.toFixed(1)}% 사용 (200ms 표본 1회)`, value: metric.usagePercent };
+  }
+  return pcUnknown(metric);
+}
+
+function pcReadMemory(metric) {
+  if (metric && metric.state === 'ok' && pcIsNumber(metric.usedBytes) && pcIsNumber(metric.totalBytes) && metric.totalBytes > 0 && metric.usedBytes <= metric.totalBytes) {
+    const percent = (metric.usedBytes / metric.totalBytes) * 100;
+    return { ok: true, text: `${pcGb(metric.usedBytes)} / ${pcGb(metric.totalBytes)} 사용 (${percent.toFixed(1)}%)`, value: percent };
+  }
+  return pcUnknown(metric);
+}
+
+function pcReadDisk(metric) {
+  if (metric && metric.state === 'ok' && pcIsNumber(metric.freeBytes) && pcIsNumber(metric.totalBytes) && metric.totalBytes > 0 && metric.freeBytes <= metric.totalBytes) {
+    return { ok: true, text: `${pcGb(metric.freeBytes)} 여유 / ${pcGb(metric.totalBytes)} (앱이 있는 드라이브)`, value: metric.freeBytes };
+  }
+  return pcUnknown(metric);
+}
+
+// 조회 결과를 상태 하나로 나눈다. 응답이 와도 모양이 맞지 않으면 확인 불가로 둔다.
+function pcClassify(result, now) {
+  if (!result || result.ok !== true) {
+    const error = result && result.error && typeof result.error === 'object' ? result.error : {};
+    const code = typeof error.code === 'string' ? error.code : 'UNKNOWN_ERROR';
+    if (code === 'NOT_ALLOWED') return { status: 'unsupported' };
+    return { status: 'failed', code, message: typeof error.message === 'string' ? error.message : '' };
+  }
+  const data = result.data;
+  const measured = data && typeof data.measuredAt === 'string' ? Date.parse(data.measuredAt) : NaN;
+  if (!data || data.schema !== PC_SCHEMA || data.source !== 'local-pc' || !Number.isFinite(measured) || !data.metrics || typeof data.metrics !== 'object') {
+    return { status: 'unverifiable' };
+  }
+  if (Math.abs(now - measured) > PC_MAX_AGE_MS) return { status: 'stale', measuredAt: data.measuredAt };
+  const m = data.metrics;
+  const items = [pcReadCpu(m.cpu), pcReadMemory(m.memory), pcReadDisk(m.disk)];
+  return { status: 'ok', measuredAt: data.measuredAt, items };
+}
+
+function pcSigned(value, unit) {
+  // 화면에 보이는 소수 첫째 자리 기준으로 0이면 부호 없이 ±0.0으로 쓴다(-0.0 같은 표시를 막는다).
+  const rounded = Math.round(value * 10) / 10;
+  const sign = rounded > 0 ? '+' : rounded < 0 ? '-' : '±';
+  return `${sign}${Math.abs(rounded).toFixed(1)}${unit}`;
+}
+
+// 직전 조회와 비교한다. 둘 중 하나라도 값이 없으면 숫자를 만들지 않고 비교 불가로 쓴다.
+function pcCompareText(previous, latest) {
+  const parts = [];
+  const cpu = previous.items[0].value !== null && latest.items[0].value !== null ? pcSigned(latest.items[0].value - previous.items[0].value, '%p') : '비교 불가';
+  const memory = previous.items[1].value !== null && latest.items[1].value !== null ? pcSigned(latest.items[1].value - previous.items[1].value, '%p') : '비교 불가';
+  const disk = previous.items[2].value !== null && latest.items[2].value !== null ? pcSigned((latest.items[2].value - previous.items[2].value) / 1024 ** 3, ' GB') : '비교 불가';
+  parts.push(`CPU ${cpu}`, `메모리 사용률 ${memory}`, `디스크 여유 ${disk}`);
+  return `직전 조회와 비교: ${parts.join(' · ')}`;
+}
+
+function pcHistoryRowText(entry) {
+  const cpu = entry.items[0].ok ? `${entry.items[0].value.toFixed(1)}%` : '확인 불가';
+  const memory = entry.items[1].ok ? `${entry.items[1].value.toFixed(1)}%` : '확인 불가';
+  const disk = entry.items[2].ok ? pcGb(entry.items[2].value) : '확인 불가';
+  return `${pcKst(entry.measuredAt)} · CPU ${cpu} · 메모리 사용률 ${memory} · 디스크 여유 ${disk}`;
+}
+
+function renderPcCheckSection(pc, history, onProbe) {
+  const section = document.createElement('div');
+  section.className = 'status-pc-check';
+  section.append(pcText('h4', '내 PC 점검 (내 코드로 조회)', 'status-heading'));
+  section.append(pcText('p', '버튼을 누를 때만 이 PC의 값을 한 번 읽습니다. 자동으로 다시 읽지 않으며, 읽은 값은 AI나 외부 서버로 보내지 않습니다.', 'status-line status-line-empty'));
+
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'status-pc-check-button';
+  button.dataset.pcProbe = '1';
+  button.textContent = pc.status === 'loading' ? '조회 중…' : 'PC 값 조회';
+  button.disabled = pc.status === 'loading';
+  button.addEventListener('click', onProbe);
+  section.append(button);
+
+  let line;
+  if (pc.status === 'idle') line = pcText('p', '아직 조회하지 않음: 위 "PC 값 조회" 버튼을 눌러 주세요.', 'status-line status-line-empty');
+  else if (pc.status === 'loading') line = pcText('p', '조회 중', 'status-line status-line-loading');
+  else if (pc.status === 'unsupported') line = pcText('p', '지원 없음: 이 앱 판은 학생 코드의 PC 조회를 허용하지 않습니다. 위쪽 「내 PC 상태」 카드를 이용하세요.', 'status-line status-line-error');
+  else if (pc.status === 'failed') line = pcText('p', `실패: PC 값을 불러오지 못했습니다 (${pc.code}${pc.message ? ` · ${pc.message}` : ''}). 이번 조회의 값은 없습니다(아래 기록은 이전에 성공한 조회입니다). 버튼을 다시 눌러 주세요.`, 'status-line status-line-error');
+  else if (pc.status === 'unverifiable') line = pcText('p', '확인 불가: 응답은 왔지만 형식을 확인하지 못해 값을 보여 주지 않습니다.', 'status-line status-line-error');
+  else if (pc.status === 'stale') line = pcText('p', `오래됨: 측정 시각 ${pcKst(pc.measuredAt)}이 60초보다 오래되어 현재 값으로 쓰지 않습니다. 버튼을 다시 눌러 주세요.`, 'status-line status-line-error');
+  else {
+    const measured = pc.items.filter((item) => item.ok).length;
+    const unknown = pc.items.length - measured;
+    line = pcText('p', `조회 성공: 측정 시각 ${pcKst(pc.measuredAt)} · 항목 ${pc.items.length}개 중 실측 ${measured}개${unknown ? ` · 확인 불가 ${unknown}개` : ''}`, 'status-line');
+  }
+  line.setAttribute('role', 'status');
+  section.append(line);
+
+  if (pc.status === 'ok') {
+    const dl = document.createElement('dl');
+    dl.className = 'status-pc-check-fields';
+    pc.items.forEach((item, index) => {
+      dl.append(pcText('dt', PC_ITEM_LABELS[index]), pcText('dd', item.text));
+    });
+    section.append(dl);
+  }
+
+  section.append(pcText('h4', `최근 조회 기록 (최대 ${PC_HISTORY_LIMIT}번)`, 'status-heading'));
+  if (!history.length) {
+    section.append(pcText('p', '아직 성공한 조회가 없습니다.', 'status-line status-line-empty'));
+  } else {
+    const list = document.createElement('ul');
+    list.className = 'status-pc-check-history';
+    history.forEach((entry) => list.append(pcText('li', pcHistoryRowText(entry))));
+    section.append(list);
+    section.append(pcText('p', history.length > 1 ? pcCompareText(history[history.length - 2], history[history.length - 1]) : '직전 조회가 없어 비교할 수 없습니다.', 'status-line'));
+  }
+  section.append(pcText('p', '기록은 이 화면을 연 동안만 메모리에 있고, 새로고침하면 사라집니다. 크기는 1024 기준(Windows와 같은 방식)으로 계산합니다. 관찰한 값일 뿐 정상·안전 판정이 아닙니다.', 'status-line status-line-empty'));
+  return section;
+}
+
+export function createStudentView({ api, onChange } = {}) {
+  // 내 PC 점검 상태는 화면을 다시 그려도 남도록 여기(함수 밖)에 둔다.
+  let pc = { status: 'idle' };
+  const pcHistory = [];
+  let pcGeneration = 0;
+  const notify = () => { if (typeof onChange === 'function') onChange(); };
+
+  async function probePc() {
+    if (pc.status === 'loading') return;
+    if (!api || typeof api.get !== 'function') {
+      pc = { status: 'unsupported' };
+      notify();
+      return;
+    }
+    const own = ++pcGeneration;
+    pc = { status: 'loading' };
+    notify();
+    let result;
+    try {
+      result = await api.get(PC_PATH);
+    } catch {
+      result = { ok: false, error: { code: 'CLIENT_ERROR', message: '' } };
+    }
+    if (own !== pcGeneration) return;
+    pc = pcClassify(result, Date.now());
+    if (pc.status === 'ok') {
+      pcHistory.push({ measuredAt: pc.measuredAt, items: pc.items });
+      while (pcHistory.length > PC_HISTORY_LIMIT) pcHistory.shift();
+    }
+    notify();
+    // 다시 그리면서 버튼이 새로 만들어져 초점이 사라졌으면 되돌린다. 사용자가 다른 곳으로 옮겼다면 건드리지 않는다.
+    if (typeof document !== 'undefined' && document.activeElement === document.body) {
+      const next = document.querySelector('[data-pc-probe="1"]');
+      if (next) next.focus();
+    }
+  }
+
   return {
     renderIdentity,
     renderDecision,
     renderEvents,
-    renderStatus,
+    renderStatus(input) {
+      const root = renderStatus(input);
+      root.append(renderPcCheckSection(pc, pcHistory, probePc));
+      return root;
+    },
     renderVulnerabilities,
     renderAiConnection,
     renderExplanation,
