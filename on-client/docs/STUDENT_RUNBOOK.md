@@ -4,11 +4,11 @@
 
 ## 1. 이 프로젝트가 하는 일
 
-케셰브(KESHEV-Cloudy)는 회사 직원이 자기 로그인 상태, 업무 앱 접속 판정, 접속·XDR 기록, AI 연결 상태, AI가 생성한 사건 설명, 보안 조치 상태, 설치 패키지의 알려진 취약점(OSV) 조회 결과를 보는 보안 Agent 화면입니다. 화면은 "제공 공통 UI"(서버·레이아웃·버튼·실제 요청)와 "학생 구현 표시"(`student/extension.mjs`가 그리는 화면)로 분리되어 있습니다. 학생 코드는 결과를 계산하지 않고, 제공 코드가 넘겨준 값을 **해석해서 글로 보여주기만** 합니다.
+케셰브(KESHEV-Cloudy)는 회사 직원이 자기 로그인 상태, 업무 앱 접속 판정, 접속·XDR 기록, AI 연결 상태, AI가 생성한 사건 설명, 보안 조치 상태, 설치 패키지의 알려진 취약점(OSV) 조회 결과를 보는 보안 Agent 화면입니다. 화면은 "제공 공통 UI"(서버·레이아웃·버튼·실제 요청)와 "학생 구현 표시"(`student/extension.mjs`가 그리는 화면)로 분리되어 있습니다. 학생 코드는 결과를 계산하지 않고, 제공 코드가 넘겨준 값을 **해석해서 글로 보여주기만** 합니다. (2026-10-30 변경: `renderStatus` 안의 「내 PC 점검」 구역은 제공 조회 값을 받아 비율과 직전 조회와의 차이를 계산해 보여 줍니다. 자세한 내용은 `docs/STUDENT_DAY2_PC_STATUS.md`.)
 
 ## 2. 지원 환경과 버전 (직접 확인함)
 
-- `on-client/package.json`에 기록된 값: 이름 `alekov-client-starter`, 버전 `0.2.11`, `type: module`.
+- `on-client/package.json`에 기록된 값: 이름 `alekov-client-starter`, 버전 `0.2.21`, `type: module`. 이 문서를 처음 쓸 때(21단계)는 `0.2.11`이었고, 2026-10-30에 제공 업데이트 도구로 `0.2.21`로 올렸습니다. 아래 절차 중 어디까지를 `0.2.21`에서 다시 확인했는지는 `docs/STUDENT_REPRODUCTION_LOG.md` 7절에 구분해 적었습니다.
 - Node.js: `package.json`의 `engines.node`는 `24.19.0`. `tools/start-alekov.ps1`은 실행 전 Node 버전을 확인하며, 메이저 버전이 **22~24 범위**를 벗어나면 실행을 중단합니다(파일 안의 `$major -lt 22 -or $major -gt 24` 조건을 직접 읽어서 확인). 24.19.0이 아니면 경고만 띄우고 계속 진행합니다.
 - 외부 npm 의존성: 저장소 안에 `package-lock.json`이 **존재하지 않습니다**(직접 `ls`로 확인). `README.md`에도 "외부 npm 의존성이 없다"고 적혀 있고, 코드도 이와 일치합니다. 그래서 `npm install`은 필요하지 않습니다.
 - OS: `tools/start-alekov.ps1`은 PowerShell(Windows) 스크립트입니다. 다른 OS에서 PowerShell 없이 실행하는 경로는 이 문서에서 확인하지 않았으므로 **미확인**으로 남깁니다. `node src/server.mjs`로 직접 실행하는 경로는 Linux 환경(이 세션의 작업 공간)에서 직접 실행해 응답을 받은 것까지 확인했습니다.
@@ -118,7 +118,8 @@ flowchart LR
 |---|---|---|---|
 | 보호 현황 | 현재 로그인 / 내 기기 / 내 세션 / 도움정보 / AI 연결 / AI 연결 점검 / 설치 패키지와 취약점 정보 | 제공 | — |
 | 보호 현황 | 학생 구현 표시 | 학생 | `renderIdentity` (13단계) |
-| 보호 현황 | 학생 상태·알림 표시 | 학생 | `renderStatus` (16단계) |
+| 보호 현황 | 내 PC 상태 (`0.2.21`에서 새로 생긴 제공 카드, 「내 PC 확인」 버튼) | 제공 | — |
+| 보호 현황 | 학생 상태·알림 표시 | 학생 | `renderStatus` (16단계, 2026-10-30에 「내 PC 점검」 구역 추가) |
 | 보호 현황 | 학생 AI 연결 표시 | 학생 | `renderAiConnection` (17단계) |
 | 보호 현황 | 학생 패키지 조회 표시 | 학생 | `renderVulnerabilities` (20단계) |
 | 업무 앱 | 접속 요청 / 판정 결과 | 제공 | — |
@@ -135,6 +136,7 @@ flowchart LR
 | 함수 | 확인한 상태 (모의 데이터) | 실제 화면에서 확인 | 구조적으로 확인 못 한 부분 |
 |---|---|---|---|
 | `renderIdentity`/`renderDecision`/`renderEvents`/`renderStatus` | O | O (보호 현황/업무 앱/보안 기록 탭) | 없음 |
+| `renderStatus`의 「내 PC 점검」 구역 (2일차) | 오래됨·실패·지원 없음·응답 이상·일부 항목 확인 불가 | 내 PC에서 실제 값 표시, 최근 5번 비교 | 내 PC에서의 `확인 불가` 화면 |
 | `renderAiConnection` | idle/loading/ok(test·verified)/error 9종 코드 | 실패(`ON_AI_PROVISIONING_PENDING`) 경로만 | 성공(ok) 경로 — 데모 엔진에 `readAiIdentity`가 없어 항상 실패 |
 | `renderExplanation` | idle/loading/ok/error, 근거 불일치, 근거 없음, 이미 실행됨 | 실패 경로만 | 성공(ok) 경로 — 위와 같은 이유 |
 | `renderAction` | 11개 status 전부 | `idle`만(지원 조치 없는 기록) | prepared~succeeded — 데모 기록에 `supportedActions`가 없음 |
@@ -156,3 +158,7 @@ flowchart LR
 - 이 문서는 **예제(demo) 모드와 기본(disconnected) 모드에서 직접 실행하고 확인한 것만** "확인함"으로 적었습니다.
 - 실제 회사 시스템(SDP)·실제 AI 모델 연결이 성공했을 때의 동작은 이 문서가 작성된 환경에서 **확인하지 않았으며**, "확인했다"고 적지 않습니다.
 - OSV 조회 결과는 알려진 취약점 데이터베이스 조회 결과일 뿐이며, 조회 결과가 없다는 사실만으로 패키지나 앱 전체가 안전하다고 보장하지 않습니다(20단계 작업 시 받은 공식 안내와 동일).
+
+## 8. 개정 기록
+
+- 2026-10-30: 시작 틀 `0.2.21` 반영(2절), `renderStatus`의 「내 PC 점검」 구역과 제공 카드 「내 PC 상태」 구분(1·5·6절). 다른 절(3~4절의 실행 절차·구성도)은 `0.2.11`에서 확인한 내용을 그대로 두었고 `0.2.21`에서 전부 다시 확인하지는 않았습니다. 2일차 내용은 `docs/STUDENT_DAY2_PC_STATUS.md`에 있습니다.
