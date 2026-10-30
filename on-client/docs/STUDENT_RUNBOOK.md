@@ -136,7 +136,8 @@ flowchart LR
 | 함수 | 확인한 상태 (모의 데이터) | 실제 화면에서 확인 | 구조적으로 확인 못 한 부분 |
 |---|---|---|---|
 | `renderIdentity`/`renderDecision`/`renderEvents`/`renderStatus` | O | O (보호 현황/업무 앱/보안 기록 탭) | 없음 |
-| `renderStatus`의 「내 PC 점검」 구역 (2일차) | 오래됨·실패·지원 없음·응답 이상·일부 항목 확인 불가 | 내 PC에서 실제 값 표시, 최근 5번 비교 | 내 PC에서의 `확인 불가` 화면 |
+| `renderStatus`의 「내 PC 점검」 구역 (2일차) | 오래됨·지원 없음·응답 이상·일부 항목 확인 불가 | 내 PC에서 실제 값 표시, 최근 5번 비교, 서버를 끈 실패 화면 | 내 PC에서의 `확인 불가` 화면 |
+| `renderStatus`의 「연결과 기록」 구역 (3일차) | 방화벽 꺼짐, 일부 항목 못 읽음, 조회 실패, 응답 이상, 서버 모드 알 수 없음 | 내 PC에서 네트워크·방화벽·Windows 경고·오류 표시, `SDP 미연결` 분리 표시, 제공 카드와 값 일치 | 내 PC에서의 `확인 불가` 화면, 예제(demo) 모드 화면 |
 | `renderAiConnection` | idle/loading/ok(test·verified)/error 9종 코드 | 실패(`ON_AI_PROVISIONING_PENDING`) 경로만 | 성공(ok) 경로 — 데모 엔진에 `readAiIdentity`가 없어 항상 실패 |
 | `renderExplanation` | idle/loading/ok/error, 근거 불일치, 근거 없음, 이미 실행됨 | 실패 경로만 | 성공(ok) 경로 — 위와 같은 이유 |
 | `renderAction` | 11개 status 전부 | `idle`만(지원 조치 없는 기록) | prepared~succeeded — 데모 기록에 `supportedActions`가 없음 |
@@ -162,3 +163,4 @@ flowchart LR
 ## 8. 개정 기록
 
 - 2026-10-30: 시작 틀 `0.2.21` 반영(2절), `renderStatus`의 「내 PC 점검」 구역과 제공 카드 「내 PC 상태」 구분(1·5·6절). 다른 절(3~4절의 실행 절차·구성도)은 `0.2.11`에서 확인한 내용을 그대로 두었고 `0.2.21`에서 전부 다시 확인하지는 않았습니다. 2일차 내용은 `docs/STUDENT_DAY2_PC_STATUS.md`에 있습니다.
+- 2026-10-30: 3일차 「연결과 기록」 구역 추가(코드 커밋 `09f9becba11296e40b507682a29cfc66aa2e81e8`). 내용과 확인 결과는 `docs/STUDENT_DAY3_CONNECTION_LOG.md`에 있습니다.
