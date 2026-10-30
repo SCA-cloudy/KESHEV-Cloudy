@@ -1099,7 +1099,9 @@ function renderVulnerabilities(input) {
 
 // 2일차(마지막 총공세) 구현: 내 PC 점검. 앞 단계 함수는 그대로 두고 renderStatus 아래에 구역 하나를 덧붙인다.
 // - 측정은 제공된 /api/pc/status 조회를 그대로 쓴다(CPU·메모리·디스크를 다시 측정하지 않는다). 내가 더한 것은 "최근 조회 비교" 한 가지다.
-// - 이 구역은 CPU 사용률·메모리 사용량·디스크 남은 공간 세 가지만 다룬다(방화벽·기록·네트워크는 위쪽 제공 카드에서 본다).
+// - 「내 PC 점검」은 CPU 사용률·메모리 사용량·디스크 남은 공간 세 가지만 다룬다.
+// - 3일차(연결·기록): 바로 아래 「연결과 기록 (읽기만 함)」 구역이 같은 조회 결과에서 네트워크·방화벽·Windows 경고·오류 건수를 읽기만 해서 보여 준다.
+//   방화벽·보안 설정은 읽기만 하고 바꾸지 않는다. 못 읽은 항목은 '확인 불가'와 이유로 쓴다. SDP 연결 상태는 PC 조회 결과와 따로 보여 준다.
 // - 제공 앱이 넘겨 주는 api.get('/api/pc/status')만 쓴다(직접 fetch·새 주소·저장소 사용 없음).
 // - 사용자가 버튼을 누를 때만 한 번 읽는다. 그리기나 onChange에서 읽지 않고 자동으로 되풀이하지 않는다.
 // - 값이 없거나 못 읽은 항목은 0이나 정상이 아니라 "확인 불가"와 이유로 보여 준다. 안전·정상 판정은 하지 않는다.
@@ -1172,6 +1174,42 @@ function pcReadDisk(metric) {
   return pcUnknown(metric);
 }
 
+function pcReadNetwork(metric) {
+  if (metric && metric.state === 'ok' && pcIsCount(metric.interfaceCount) && pcIsCount(metric.ipv4Count)) {
+    const none = metric.interfaceCount === 0 ? ' · 확인된 외부 인터페이스가 없음' : '';
+    return { ok: true, text: `외부 네트워크 인터페이스 ${metric.interfaceCount}개 · IPv4 구성 ${metric.ipv4Count}개${none} (이 PC의 로컬 구성 요약이며 인터넷 접속·유선/무선 여부는 확인하지 않음)`, value: null };
+  }
+  return pcUnknown(metric);
+}
+
+function pcReadFirewall(metric) {
+  const profiles = metric && metric.state === 'ok' && Array.isArray(metric.profiles) ? metric.profiles : null;
+  if (profiles && profiles.length === 3 && profiles.every((p) => p && typeof p.name === 'string' && typeof p.enabled === 'boolean')) {
+    const off = profiles.filter((p) => !p.enabled).map((p) => p.name);
+    const head = off.length ? `꺼진 프로필: ${off.join(', ')}` : 'Domain·Private·Public 모두 켜짐';
+    return { ok: true, text: `${head} (읽기만 함 · 설정을 바꾸지 않음 · 안전 판정이 아님)`, value: null };
+  }
+  return pcUnknown(metric);
+}
+
+function pcReadEvents(metric) {
+  if (metric && metric.state === 'ok' && pcIsCount(metric.warningCount) && pcIsCount(metric.errorCount) && typeof metric.truncated === 'boolean') {
+    const partial = metric.truncated ? ' · 최대 5,000건까지만 집계한 일부 결과' : '';
+    return { ok: true, text: `최근 24시간 System·Application 경고 ${metric.warningCount}건 · 오류 ${metric.errorCount}건${partial} (침해·공격 탐지 결과가 아님)`, value: null };
+  }
+  return pcUnknown(metric);
+}
+
+// SDP 서버 연결 상태는 PC 조회와 별개다. 서버가 알려 준 모드(input.mode)만 근거로 쓰고, 알 수 없으면 확인 불가로 둔다.
+function pcSdpState(mode) {
+  if (mode === 'disconnected') return { text: 'SDP 미연결', note: '서버가 연결 어댑터 없이 실행 중이라고 알려 줌(mode=disconnected). 위 PC 조회 결과와는 별개입니다.' };
+  if (mode === 'demo') return { text: 'SDP 미연결 (예제 데이터를 보는 중)', note: '서버가 예제(demo) 모드라고 알려 줌. 실제 SDP 서버에 연결된 것이 아닙니다.' };
+  if (mode === 'connected') return { text: 'SDP 연결 모드로 응답함', note: '서버가 연결 모드(mode=connected)라고 알려 준 것이며, 이 화면이 실제 연결 성공을 확인한 것은 아닙니다.' };
+  return { text: '확인 불가 (서버 연결 모드를 알 수 없음)', note: '기본 조회가 아직 끝나지 않았거나 응답이 서로 달라 연결 여부를 판단하지 않았습니다. 미연결로 단정하지 않습니다.' };
+}
+
+const PC_STATUS_WORD = { idle: '아직 조회하지 않음', loading: '조회 중', failed: '조회 실패', unsupported: '지원 없음', stale: '오래됨', unverifiable: '응답 형식 확인 불가' };
+
 // 조회 결과를 상태 하나로 나눈다. 응답이 와도 모양이 맞지 않으면 확인 불가로 둔다.
 function pcClassify(result, now) {
   if (!result || result.ok !== true) {
@@ -1188,7 +1226,8 @@ function pcClassify(result, now) {
   if (Math.abs(now - measured) > PC_MAX_AGE_MS) return { status: 'stale', measuredAt: data.measuredAt };
   const m = data.metrics;
   const items = [pcReadCpu(m.cpu), pcReadMemory(m.memory), pcReadDisk(m.disk)];
-  return { status: 'ok', measuredAt: data.measuredAt, items };
+  const links = [pcReadNetwork(m.network), pcReadFirewall(m.firewall), pcReadEvents(m.events)];
+  return { status: 'ok', measuredAt: data.measuredAt, items, links };
 }
 
 function pcSigned(value, unit) {
@@ -1268,6 +1307,40 @@ function renderPcCheckSection(pc, history, onProbe) {
   return section;
 }
 
+const PC_LINK_LABELS = ['네트워크 연결', '방화벽 설정', 'Windows 경고·오류'];
+
+function renderPcLinkSection(pc, mode) {
+  const section = document.createElement('div');
+  section.className = 'status-pc-links';
+  section.append(pcText('h4', '연결과 기록 (읽기만 함)', 'status-heading'));
+  section.append(pcText('p', '위 「PC 값 조회」와 같은 조회 결과에서 읽기만 합니다. 방화벽·보안 설정은 바꾸지 않습니다. 못 읽은 항목은 0이나 정상이 아니라 확인 불가로 보여 줍니다. 내 PC 조회 결과와 SDP 연결 상태는 따로 표시합니다.', 'status-line status-line-empty'));
+
+  const dl = document.createElement('dl');
+  dl.className = 'status-pc-links-fields';
+  if (pc.status === 'ok') {
+    pc.links.forEach((item, index) => {
+      dl.append(pcText('dt', PC_LINK_LABELS[index]), pcText('dd', item.text));
+    });
+  } else {
+    const why = PC_STATUS_WORD[pc.status] || '값 없음';
+    PC_LINK_LABELS.forEach((label) => {
+      dl.append(pcText('dt', label), pcText('dd', `확인 불가 (${why}: 이번 조회에서 읽은 값이 없음)`));
+    });
+  }
+  const sdp = pcSdpState(mode);
+  dl.append(pcText('dt', 'SDP 서버'), pcText('dd', sdp.text));
+  section.append(dl);
+
+  if (pc.status === 'ok') {
+    const measured = pc.links.filter((item) => item.ok).length;
+    const unknown = pc.links.length - measured;
+    section.append(pcText('p', `내 PC 조회: ${pcKst(pc.measuredAt)} · 연결·기록 항목 ${pc.links.length}개 중 실측 ${measured}개${unknown ? ` · 확인 불가 ${unknown}개` : ''}`, 'status-line'));
+  }
+  section.append(pcText('p', `SDP 서버 상태: ${sdp.note}`, 'status-line status-line-empty'));
+  section.append(pcText('p', 'Windows 경고·오류 건수는 침해나 공격을 탐지한 결과가 아니며, 이 앱은 공격이나 침투를 흉내 내는 시험을 하지 않습니다.', 'status-line status-line-empty'));
+  return section;
+}
+
 export function createStudentView({ api, onChange } = {}) {
   // 내 PC 점검 상태는 화면을 다시 그려도 남도록 여기(함수 밖)에 둔다.
   let pc = { status: 'idle' };
@@ -1311,7 +1384,7 @@ export function createStudentView({ api, onChange } = {}) {
     renderEvents,
     renderStatus(input) {
       const root = renderStatus(input);
-      root.append(renderPcCheckSection(pc, pcHistory, probePc));
+      root.append(renderPcCheckSection(pc, pcHistory, probePc), renderPcLinkSection(pc, input && typeof input === 'object' ? input.mode : undefined));
       return root;
     },
     renderVulnerabilities,
