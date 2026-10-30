@@ -1391,21 +1391,9 @@ function renderPcCheckSection(pc, history, onProbe) {
   section.append(pcText('p', '버튼을 누를 때만 이 PC의 값을 한 번 읽습니다. 자동으로 다시 읽지 않으며, 읽은 값은 AI나 외부 서버로 보내지 않습니다. 정상·안전을 판정하지 않고 읽은 값만 보여 줍니다.', 'muted'));
   section.append(pcStatusArea(pc, onProbe, history));
 
-  // ① 내 PC 상태
+  // ① 내 PC 상태: 제공 카드 「내 PC 상태」가 이미 CPU·메모리·디스크를 보여 주므로 값을 다시 그리지 않고 가리키기만 한다.
   section.append(pcDivider(), pcText('h3', '① 내 PC 상태'));
-  if (pc.status === 'ok') {
-    const values = document.createElement('ul');
-    values.className = 'plain-list status-pc-check-fields';
-    pc.items.forEach((item, index) => {
-      const row = document.createElement('li');
-      row.append(pcText('strong', PC_ITEM_LABELS[index]), pcText('span', item.text));
-      values.append(row);
-    });
-    section.append(values);
-  } else {
-    const why = PC_STATUS_WORD[pc.status] || '값 없음';
-    section.append(pcText('p', `확인 불가 (${why}: 이번 조회에서 읽은 값이 없음)`, 'state state-empty'));
-  }
+  section.append(pcText('p', 'CPU·메모리·디스크의 현재 값은 위쪽 제공 카드 「내 PC 상태」에서 봅니다. 이 구역은 같은 값을 다시 만들지 않고, 아래에서 값이 어떻게 변했는지만 보여 줍니다.', 'muted'));
 
   // ② 최근 기록
   section.append(pcDivider(), pcText('h3', `② 최근 기록 (최근 조회 최대 ${PC_HISTORY_LIMIT}번)`));
