@@ -92,6 +92,8 @@ function eventAppText(appId) {
 
 // at(ISO 시각 등 원래 값)을 한국 시각으로 읽을 수 있게 바꾸되, 해석할 수 없으면 원래 값을 그대로 쓴다.
 function eventTimeText(at) {
+  // 값이 비어 있으면 new Date(null)이 1970년으로 읽히므로, 날짜로 바꾸기 전에 먼저 걸러낸다.
+  if (at === null || at === undefined || at === '') return '확인 불가';
   const date = new Date(at);
   if (Number.isNaN(date.getTime())) return typeof at === 'string' && at ? at : '확인 불가';
   return `${date.toLocaleString('ko-KR')} (${at})`;
@@ -377,8 +379,11 @@ function renderNotificationsSection(notifications) {
   section.className = 'status-notifications';
   section.append(statusText('h4', '알림', 'status-heading'));
 
+  // 배열이 아니면(응답을 못 받았거나 모양이 다르면) "알림 없음"이라고 하지 않고 확인 불가로 둔다.
   const items = Array.isArray(notifications) ? notifications : [];
-  if (items.length === 0) {
+  if (!Array.isArray(notifications)) {
+    section.append(statusText('p', '확인 불가 (알림 목록의 형식을 읽지 못했습니다)', 'status-line status-line-empty'));
+  } else if (items.length === 0) {
     section.append(statusText('p', '주의할 알림이 없습니다', 'status-line status-line-empty'));
   } else {
     const list = document.createElement('ul');
@@ -1110,7 +1115,6 @@ const PC_PATH = '/api/pc/status';
 const PC_SCHEMA = 'aleph.on.pc-status.v1';
 const PC_MAX_AGE_MS = 60000;
 const PC_HISTORY_LIMIT = 5;
-const PC_ITEM_LABELS = ['CPU 사용률', '메모리 사용량', '디스크 남은 공간'];
 const PC_REASON_TEXT = {
   permission_denied: '권한 부족',
   query_failed: '조회 실패',
@@ -1186,7 +1190,7 @@ function pcReadFirewall(metric) {
   const profiles = metric && metric.state === 'ok' && Array.isArray(metric.profiles) ? metric.profiles : null;
   if (profiles && profiles.length === 3 && profiles.every((p) => p && typeof p.name === 'string' && typeof p.enabled === 'boolean')) {
     const off = profiles.filter((p) => !p.enabled).map((p) => p.name);
-    const head = off.length ? `꺼진 프로필: ${off.join(', ')}` : 'Domain·Private·Public 모두 켜짐';
+    const head = off.length ? `꺼진 프로필: ${off.join(', ')}` : `${profiles.map((p) => p.name).join('·')} 모두 켜짐`;
     return { ok: true, text: `${head} (읽기만 함 · 설정을 바꾸지 않음 · 안전 판정이 아님)`, value: null };
   }
   return pcUnknown(metric);
@@ -1220,14 +1224,25 @@ function pcClassify(result, now) {
   }
   const data = result.data;
   const measured = data && typeof data.measuredAt === 'string' ? Date.parse(data.measuredAt) : NaN;
-  if (!data || data.schema !== PC_SCHEMA || data.source !== 'local-pc' || !Number.isFinite(measured) || !data.metrics || typeof data.metrics !== 'object') {
+  if (!data || data.schema !== PC_SCHEMA || data.source !== 'local-pc' || !Number.isFinite(measured) || !data.metrics || typeof data.metrics !== 'object' || Array.isArray(data.metrics)) {
     return { status: 'unverifiable' };
   }
-  if (Math.abs(now - measured) > PC_MAX_AGE_MS) return { status: 'stale', measuredAt: data.measuredAt };
+  if (measured - now > PC_MAX_AGE_MS) return { status: 'stale', measuredAt: data.measuredAt, future: true };
+  if (now - measured > PC_MAX_AGE_MS) return { status: 'stale', measuredAt: data.measuredAt };
   const m = data.metrics;
   const items = [pcReadCpu(m.cpu), pcReadMemory(m.memory), pcReadDisk(m.disk)];
   const links = [pcReadNetwork(m.network), pcReadFirewall(m.firewall), pcReadEvents(m.events)];
   return { status: 'ok', measuredAt: data.measuredAt, items, links };
+}
+
+// 화면에 보이는 값(소수 첫째 자리)을 숫자로 돌려준다. 디스크(index 2)는 바이트를 GB(1024 기준)로 바꾼 뒤 반올림한다.
+function pcShown(value, index) {
+  return Number((index === 2 ? value / 1024 ** 3 : value).toFixed(1));
+}
+
+// 변화는 화면에 보이는 값끼리 뺀다. 그래야 40.8% → 40.7%가 ±0.0%p로 보이는 어긋남이 없다.
+function pcShownDiff(now, before, index) {
+  return pcShown(now, index) - pcShown(before, index);
 }
 
 function pcSigned(value, unit) {
@@ -1240,17 +1255,17 @@ function pcSigned(value, unit) {
 // 직전 조회와 비교한다. 둘 중 하나라도 값이 없으면 숫자를 만들지 않고 비교 불가로 쓴다.
 function pcCompareText(previous, latest) {
   const parts = [];
-  const cpu = previous.items[0].value !== null && latest.items[0].value !== null ? pcSigned(latest.items[0].value - previous.items[0].value, '%p') : '비교 불가';
-  const memory = previous.items[1].value !== null && latest.items[1].value !== null ? pcSigned(latest.items[1].value - previous.items[1].value, '%p') : '비교 불가';
-  const disk = previous.items[2].value !== null && latest.items[2].value !== null ? pcSigned((latest.items[2].value - previous.items[2].value) / 1024 ** 3, ' GB') : '비교 불가';
+  const cpu = previous.items[0].value !== null && latest.items[0].value !== null ? pcSigned(pcShownDiff(latest.items[0].value, previous.items[0].value, 0), '%p') : '비교 불가';
+  const memory = previous.items[1].value !== null && latest.items[1].value !== null ? pcSigned(pcShownDiff(latest.items[1].value, previous.items[1].value, 1), '%p') : '비교 불가';
+  const disk = previous.items[2].value !== null && latest.items[2].value !== null ? pcSigned(pcShownDiff(latest.items[2].value, previous.items[2].value, 2), ' GB') : '비교 불가';
   parts.push(`CPU ${cpu}`, `메모리 사용률 ${memory}`, `디스크 여유 ${disk}`);
   return `직전 조회와 비교: ${parts.join(' · ')}`;
 }
 
 function pcHistoryRowText(entry) {
-  const cpu = entry.items[0].ok ? `${entry.items[0].value.toFixed(1)}%` : '확인 불가';
-  const memory = entry.items[1].ok ? `${entry.items[1].value.toFixed(1)}%` : '확인 불가';
-  const disk = entry.items[2].ok ? pcGb(entry.items[2].value) : '확인 불가';
+  const cpu = entry.items[0].ok ? `${entry.items[0].value.toFixed(1)}%` : entry.items[0].text;
+  const memory = entry.items[1].ok ? `${entry.items[1].value.toFixed(1)}%` : entry.items[1].text;
+  const disk = entry.items[2].ok ? pcGb(entry.items[2].value) : entry.items[2].text;
   return `${pcKst(entry.measuredAt)} · CPU ${cpu} · 메모리 사용률 ${memory} · 디스크 여유 ${disk}`;
 }
 
@@ -1277,9 +1292,9 @@ function pcBar(percent) {
 }
 
 function pcBarRow(entry) {
-  const cpu = entry.items[0].ok ? `CPU ${pcBar(entry.items[0].value)} ${entry.items[0].value.toFixed(1)}%` : 'CPU 확인 불가';
-  const memory = entry.items[1].ok ? `메모리 ${pcBar(entry.items[1].value)} ${entry.items[1].value.toFixed(1)}%` : '메모리 확인 불가';
-  const disk = entry.items[2].ok ? `디스크 여유 ${pcGb(entry.items[2].value)}` : '디스크 확인 불가';
+  const cpu = entry.items[0].ok ? `CPU ${pcBar(entry.items[0].value)} ${entry.items[0].value.toFixed(1)}%` : `CPU ${entry.items[0].text}`;
+  const memory = entry.items[1].ok ? `메모리 ${pcBar(entry.items[1].value)} ${entry.items[1].value.toFixed(1)}%` : `메모리 ${entry.items[1].text}`;
+  const disk = entry.items[2].ok ? `디스크 여유 ${pcGb(entry.items[2].value)}` : `디스크 ${entry.items[2].text}`;
   return `${pcClock(entry.measuredAt)} · ${cpu} · ${memory} · ${disk}`;
 }
 
@@ -1297,6 +1312,13 @@ function pcFailureGuide(pc) {
       title: '응답은 왔지만 형식을 확인하지 못했습니다',
       what: '서버가 준 응답이 약속한 모양(aleph.on.pc-status.v1)과 달라서 값을 보여 주지 않습니다. 정상으로 간주하지 않았습니다.',
       steps: ['「다시 조회」를 한 번 더 누릅니다.', '같은 결과가 반복되면 앱 서버 창에 오류가 찍혔는지 확인합니다.', '앱 폴더가 0.2.21인지 package.json으로 확인합니다.'],
+    };
+  }
+  if (pc.status === 'stale' && pc.future === true) {
+    return {
+      title: '측정 시각이 현재보다 앞서 있는 값입니다',
+      what: `응답의 측정 시각(${pcKst(pc.measuredAt)})이 이 PC의 현재 시각보다 60초 넘게 앞서 있어 현재 값으로 쓰지 않습니다.`,
+      steps: ['PC의 날짜와 시계가 맞는지 확인합니다.', '「다시 조회」를 눌러 새로 읽습니다.'],
     };
   }
   if (pc.status === 'stale') {
@@ -1374,7 +1396,7 @@ function pcStatusArea(pc, onProbe, history) {
   } else if (pc.status === 'ok') {
     const measured = pc.items.filter((item) => item.ok).length;
     const unknown = pc.items.length - measured;
-    const done = pcText('p', `조회 성공: 잰 시각 ${pcKst(pc.measuredAt)} · 항목 ${pc.items.length}개 중 실측 ${measured}개${unknown ? ` · 확인 불가 ${unknown}개` : ''}`, 'state state-empty');
+    const done = pcText('p', `조회 성공: 잰 시각 ${pcKst(pc.measuredAt)} · 핵심 항목(CPU·메모리·디스크) ${pc.items.length}개 중 실측 ${measured}개${unknown ? ` · 확인 불가 ${unknown}개` : ''}`, 'state state-empty');
     done.setAttribute('role', 'status');
     area.append(done);
   } else {
@@ -1383,20 +1405,73 @@ function pcStatusArea(pc, onProbe, history) {
   return area;
 }
 
+// 6일차(틀 맞춤): 「내 PC 점검」 맨 위에 내 PC 값 4가지(CPU·메모리·디스크·방화벽)를 둔다. (맨 위 제공 상태 카드와 구분)
+// 제공 카드 「내 PC 상태」가 이미 CPU·메모리·디스크의 현재 값을 보여 주므로, 이 카드는 값을 다시 그리지 않고
+// 내가 만든 "직전 조회 대비 변화"만 보여 준다. 방화벽은 3일차 요청에 따라 읽은 내용을 그대로 보여 준다.
+// 제공 스타일의 박스(state)만 쓰고, 초록(정상처럼 보이는 색)은 쓰지 않는다.
+const PC_SHORT_LABELS = ['CPU', '메모리', '디스크'];
+const PC_DELTA_UNIT = ['%p', '%p', ' GB'];
+// 값 대조 안내: 읽은 값이 어떻게 잰 것인지, 내가 직접 어디서 맞춰 볼 수 있는지 한 줄로 알려 준다(판정은 하지 않는다).
+const PC_CHECK_HINTS = [
+  '대조: 0.2초 동안 두 번 읽어 계산한 값입니다. 작업 관리자(Ctrl+Shift+Esc)의 CPU와 비슷한 시각에 비교하세요. 순간값이라 차이가 날 수 있습니다.',
+  '대조: 전체 메모리 중 사용 중인 비율입니다. 작업 관리자의 메모리와 읽은 시각이 달라 몇 %p 차이가 날 수 있습니다.',
+  '대조: 이 앱이 들어 있는 드라이브의 남은 공간입니다. 폴더 창에서 그 드라이브의 속성이나 cmd의 dir 마지막 줄과 비교하세요.',
+  '대조: 읽기만 했고 설정은 바꾸지 않았습니다. Windows 보안의 방화벽 및 네트워크 보호 화면에서 직접 확인하세요. 안전 판정이 아닙니다.',
+];
+
+function pcDeltaText(index, previous, latest) {
+  const now = latest.items[index];
+  if (!now.ok) return now.text;
+  if (!previous) return '직전 조회가 없어 비교할 수 없음';
+  const before = previous.items[index];
+  if (!before.ok) return '비교 불가 (직전 조회에서 읽지 못함)';
+  return `직전 대비 ${pcSigned(pcShownDiff(now.value, before.value, index), PC_DELTA_UNIT[index])}`;
+}
+
+function pcStatusCards(pc, history) {
+  const wrap = document.createElement('div');
+  wrap.className = 'status-pc-check-cards';
+  const labels = [...PC_SHORT_LABELS, '방화벽'];
+  const card = (label, value, kind) => wrap.append(pcText('p', `${label}: ${value}`, `state ${kind}`));
+  if (pc.status === 'idle') {
+    labels.forEach((label) => card(label, '확인 불가 (아직 조회하지 않음)', 'state-empty'));
+  } else if (pc.status === 'loading') {
+    labels.forEach((label) => card(label, '확인 불가 (조회 중)', 'state-loading'));
+  } else if (pc.status === 'ok') {
+    const latest = history.length ? history[history.length - 1] : { items: pc.items };
+    const previous = history.length > 1 ? history[history.length - 2] : null;
+    const tail = ` · 잰 시각 ${pcKst(pc.measuredAt)} · [실제 측정]`;
+    const failTail = ` · 조회 시각 ${pcKst(pc.measuredAt)} (값은 읽지 못함)`;
+    PC_SHORT_LABELS.forEach((label, index) => {
+      card(label, `${pcDeltaText(index, previous, latest)}${latest.items[index].ok ? tail : failTail}`, 'state-empty');
+      if (latest.items[index].ok) wrap.append(pcText('p', PC_CHECK_HINTS[index], 'muted'));
+    });
+    const firewall = pc.links[1];
+    card('방화벽', `${firewall.text}${firewall.ok ? tail : failTail}`, 'state-empty');
+    if (firewall.ok) wrap.append(pcText('p', PC_CHECK_HINTS[3], 'muted'));
+  } else {
+    const reason = pcFailureGuide(pc).title;
+    labels.forEach((label) => card(label, `확인 불가 (${reason})`, 'state-empty'));
+  }
+  return wrap;
+}
+
 function renderPcCheckSection(pc, history, onProbe) {
   const section = document.createElement('div');
   section.className = 'status-pc-check';
   section.setAttribute('aria-busy', pc.status === 'loading' ? 'true' : 'false');
   section.append(pcText('h3', '내 PC 점검 (내 코드로 조회) · 핵심 3가지'));
-  section.append(pcText('p', '버튼을 누를 때만 이 PC의 값을 한 번 읽습니다. 자동으로 다시 읽지 않으며, 읽은 값은 AI나 외부 서버로 보내지 않습니다. 정상·안전을 판정하지 않고 읽은 값만 보여 줍니다.', 'muted'));
+  section.append(pcText('p', '버튼을 누를 때만 이 PC의 값을 한 번 읽습니다. 자동으로 다시 읽지 않으며, 읽은 값은 AI나 외부 서버로 보내지 않습니다. 정상·안전을 판정하지 않고 읽은 값만 보여 줍니다. 아래 값은 모두 이 PC에서 실제로 읽은 값이며 예시 값은 없습니다. 못 읽은 값은 0이나 정상으로 꾸미지 않고 `확인 불가 (이유)`로 보여 줍니다.', 'muted'));
+  section.append(pcText('p', '화면 틀: 맨 위의 상태 카드(내 PC 상태·현재 로그인·내 기기·내 세션)는 제공 화면이고, 이 카드는 그 아래의 추이와 기록입니다.', 'muted'));
   section.append(pcStatusArea(pc, onProbe, history));
 
   // ① 내 PC 상태: 제공 카드 「내 PC 상태」가 이미 CPU·메모리·디스크를 보여 주므로 값을 다시 그리지 않고 가리키기만 한다.
-  section.append(pcDivider(), pcText('h3', '① 내 PC 상태'));
+  section.append(pcDivider(), pcText('h3', '① 내 PC 값 4가지 (CPU·메모리·디스크·방화벽)'));
+  section.append(pcStatusCards(pc, history));
   section.append(pcText('p', 'CPU·메모리·디스크의 현재 값은 위쪽 제공 카드 「내 PC 상태」에서 봅니다. 이 구역은 같은 값을 다시 만들지 않고, 아래에서 값이 어떻게 변했는지만 보여 줍니다.', 'muted'));
 
   // ② 최근 기록
-  section.append(pcDivider(), pcText('h3', `② 최근 기록 (최근 조회 최대 ${PC_HISTORY_LIMIT}번)`));
+  section.append(pcDivider(), pcText('h3', `② 최근 기록 (이 PC에서 실제로 읽은 값 · 최근 조회 최대 ${PC_HISTORY_LIMIT}번)`));
   if (!history.length) {
     section.append(pcText('p', '아직 성공한 조회가 없습니다.', 'state state-empty'));
   } else {
@@ -1411,7 +1486,7 @@ function renderPcCheckSection(pc, history, onProbe) {
   section.append(pcText('p', '「보안 기록」 탭의 기록은 제공 화면 그대로이며 여기서 바꾸지 않았습니다.', 'muted'));
 
   // ③ 변화
-  section.append(pcDivider(), pcText('h3', '③ 변화 (내가 조회한 순서)'));
+  section.append(pcDivider(), pcText('h3', '③ 변화 (이 PC에서 실제로 읽은 값 · 내가 조회한 순서)'));
   if (!history.length) {
     section.append(pcText('p', '조회를 2번 이상 하면 값이 어떻게 변했는지 막대로 비교할 수 있습니다.', 'state state-empty'));
   } else {
@@ -1452,7 +1527,7 @@ function renderPcLinkSection(pc, mode) {
   if (pc.status === 'ok') {
     const measured = pc.links.filter((item) => item.ok).length;
     const unknown = pc.links.length - measured;
-    section.append(pcText('p', `내 PC 조회: ${pcKst(pc.measuredAt)} · 연결·기록 항목 ${pc.links.length}개 중 실측 ${measured}개${unknown ? ` · 확인 불가 ${unknown}개` : ''}`, 'status-line'));
+    section.append(pcText('p', `내 PC 조회: ${pcKst(pc.measuredAt)} · 연결·기록 항목(네트워크·방화벽·Windows 경고·오류) ${pc.links.length}개 중 실측 ${measured}개${unknown ? ` · 확인 불가 ${unknown}개` : ''}`, 'status-line'));
   }
   section.append(pcText('p', `SDP 서버 상태: ${sdp.note}`, 'status-line status-line-empty'));
   section.append(pcText('p', 'Windows 경고·오류 건수는 침해나 공격을 탐지한 결과가 아니며, 이 앱은 공격이나 침투를 흉내 내는 시험을 하지 않습니다.', 'status-line status-line-empty'));
@@ -1503,7 +1578,11 @@ export function createStudentView({ api, onChange } = {}) {
     renderStatus(input) {
       const root = renderStatus(input);
       // 4일차: 핵심 3가지가 먼저 보이도록 내 PC 점검과 연결·기록을 맨 위에 둔다(기존 기기·세션·알림은 그 아래).
-      root.prepend(renderPcCheckSection(pc, pcHistory, probePc), renderPcLinkSection(pc, input && typeof input === 'object' ? input.mode : undefined));
+      const mode = input && typeof input === 'object' ? input.mode : undefined;
+      const parts = [renderPcCheckSection(pc, pcHistory, probePc), renderPcLinkSection(pc, mode)];
+      // 예제(demo) 모드에서는 아래 기기·세션·알림이 예제 데이터이므로, 실제 값과 섞이지 않게 한 줄을 먼저 둔다.
+      if (mode === 'demo') parts.push(pcText('p', '아래 기기·세션·알림은 예제(demo) 데이터이며 이 PC의 실제 값이 아닙니다. 위의 내 PC 값은 이 PC에서 실제로 읽은 값입니다.', 'status-line status-line-empty'));
+      root.prepend(...parts);
       return root;
     },
     renderVulnerabilities,

@@ -4,12 +4,13 @@
 
 ## 1. 이 프로젝트가 하는 일
 
-케셰브(KESHEV-Cloudy)는 회사 직원이 자기 로그인 상태, 업무 앱 접속 판정, 접속·XDR 기록, AI 연결 상태, AI가 생성한 사건 설명, 보안 조치 상태, 설치 패키지의 알려진 취약점(OSV) 조회 결과를 보는 보안 Agent 화면입니다. 화면은 "제공 공통 UI"(서버·레이아웃·버튼·실제 요청)와 "학생 구현 표시"(`student/extension.mjs`가 그리는 화면)로 분리되어 있습니다. 학생 코드는 결과를 계산하지 않고, 제공 코드가 넘겨준 값을 **해석해서 글로 보여주기만** 합니다. (2026-10-30 변경: `renderStatus` 안의 「내 PC 점검」 구역은 제공 조회 값을 받아 비율과 직전 조회와의 차이를 계산해 보여 줍니다. 자세한 내용은 `docs/STUDENT_DAY2_PC_STATUS.md`.)
+케셰브(KESHEV-Cloudy)는 회사 직원이 자기 로그인 상태, 업무 앱 접속 판정, 접속·XDR 기록, AI 연결 상태, AI가 생성한 사건 설명, 보안 조치 상태, 설치 패키지의 알려진 취약점(OSV) 조회 결과를 보는 보안 Agent 화면입니다. 화면은 "제공 공통 UI"(서버·레이아웃·버튼·실제 요청)와 "학생 구현 표시"(`student/extension.mjs`가 그리는 화면)로 분리되어 있습니다. 학생 코드는 결과를 계산하지 않고, 제공 코드가 넘겨준 값을 **해석해서 글로 보여주기만** 합니다. (2026-10-30 변경: `renderStatus` 안의 「내 PC 점검」 구역은 제공 조회 값을 받아 비율과 직전 조회와의 차이를 계산해 보여 줍니다. 자세한 내용은 `docs/STUDENT_DAY2_PC_STATUS.md`. 2026-11-02 6일차 최종 코드 기준의 정리는 `docs/STUDENT_SUBMISSION_NOTE.md`에 있습니다.)
 
 ## 2. 지원 환경과 버전 (직접 확인함)
 
 - `on-client/package.json`에 기록된 값: 이름 `alekov-client-starter`, 버전 `0.2.21`, `type: module`. 이 문서를 처음 쓸 때(21단계)는 `0.2.11`이었고, 2026-10-30에 제공 업데이트 도구로 `0.2.21`로 올렸습니다. 아래 절차 중 어디까지를 `0.2.21`에서 다시 확인했는지는 `docs/STUDENT_REPRODUCTION_LOG.md` 7절에 구분해 적었습니다.
 - Node.js: `package.json`의 `engines.node`는 `24.19.0`. `tools/start-alekov.ps1`은 실행 전 Node 버전을 확인하며, 메이저 버전이 **22~24 범위**를 벗어나면 실행을 중단합니다(파일 안의 `$major -lt 22 -or $major -gt 24` 조건을 직접 읽어서 확인). 24.19.0이 아니면 경고만 띄우고 계속 진행합니다.
+- 기준 코드(6일차 최종): `student/extension.mjs` git blob `02f70d8d482b3b0fe21747b3eabefcd7b8a9ccd9`, SHA256 `A4515E6D7995E83B09D82495E85A4EB95B7F04F7811EFD2CA41993EE88C9DF8B`. 이 문서의 3~5절(실행 절차·구성도·제공/학생 구분)은 21단계 때 확인한 내용이고, 6일차에 코드가 바뀐 부분은 6절 표와 8절에 적었습니다. 6일차 코드로 새 폴더에서 처음부터 따라 한 것은 커밋 후 확인 예정입니다(`docs/STUDENT_REPRODUCTION_LOG.md` 8절).
 - 외부 npm 의존성: 저장소 안에 `package-lock.json`이 **존재하지 않습니다**(직접 `ls`로 확인). `README.md`에도 "외부 npm 의존성이 없다"고 적혀 있고, 코드도 이와 일치합니다. 그래서 `npm install`은 필요하지 않습니다.
 - OS: `tools/start-alekov.ps1`은 PowerShell(Windows) 스크립트입니다. 다른 OS에서 PowerShell 없이 실행하는 경로는 이 문서에서 확인하지 않았으므로 **미확인**으로 남깁니다. `node src/server.mjs`로 직접 실행하는 경로는 Linux 환경(이 세션의 작업 공간)에서 직접 실행해 응답을 받은 것까지 확인했습니다.
 
@@ -40,6 +41,8 @@ npm start          # 기본 모드(연결 안 됨)
 npm run demo       # 예제(demo) 모드 — 실제 연결이나 성취가 아님
 npm run check      # student/extension.mjs 문법만 확인(node --check)
 ```
+
+PowerShell에서 `npm`이 "스크립트를 실행할 수 없습니다"(`npm.ps1`, `PSSecurityException`)로 막히면 `npm.cmd start`처럼 `npm.cmd`로 입력합니다(실행 정책은 바꾸지 않아도 됩니다. 2026-11-02 내 PC에서 이 오류를 만나 `npm.cmd`로 해결했습니다). `npm start demo`처럼 뒤에 `demo`를 붙이면 `UNKNOWN_ARGUMENT`가 나오므로 예제 모드는 `npm run demo`로 켭니다.
 
 이 저장소에서 `node --version`과 `node src/server.mjs --demo` 실행 결과(`케셰브 예제: http://127.0.0.1:5189`가 출력되고 `curl 127.0.0.1:5189`로 HTML 응답을 받음)를 **직접 실행해서 확인**했습니다. 포트는 환경변수 `ON_PORT`(기본 `5189`)로 바꿀 수 있습니다(`.env.example`, `src/server.mjs`에서 확인).
 
@@ -138,6 +141,7 @@ flowchart LR
 | `renderIdentity`/`renderDecision`/`renderEvents`/`renderStatus` | O | O (보호 현황/업무 앱/보안 기록 탭) | 없음 |
 | `renderStatus`의 「내 PC 점검」 구역 (2일차) | 오래됨·지원 없음·응답 이상·일부 항목 확인 불가 | 내 PC에서 실제 값 표시, 최근 5번 비교, 서버를 끈 실패 화면 | 내 PC에서의 `확인 불가` 화면 |
 | `renderStatus`의 「내 PC 점검」 핵심 3가지·「다시 조회」·오류 화면 (4일차, 코드 커밋 `c92b9e7`. `student/appearance.json`은 4일차 보정 `44a6399`에서 삭제) | 서버 오류·형식 이상·지원 없음·읽을 수 없는 응답·시간 초과 오류 화면(내 화면에 가짜 응답을 넣어 본 것 포함) | 내 PC에서 읽는 중 표시, 가짜 응답 5종과 복구(보정 전 파일), 보정 후 파일로 조회 전·후 화면 순서와 키보드 조회 | 보정 후 파일로 읽는 중 표시·서버를 끈 연결 실패 화면·오류 화면 5종 |
+| `renderStatus`의 「내 PC 점검」 (6일차 최종 코드, blob `02f70d8d…`) | 가짜 응답: CPU만 실패, 방화벽 미지원, 서버 오류(리눅스 작업 공간, 참고) | 내 PC에서 조회 전·후, ① 카드와 변화 값 일치, 서버를 끈 실패와 복구(2026-11-03). 키보드 조작과 포커스 유지는 6일차 중간 코드로만 확인 | 최종 코드로 읽는 중 화면, 예제(demo) 모드, 실제 연결 상태 |
 | `renderStatus`의 「연결과 기록」 구역 (3일차) | 방화벽 꺼짐, 일부 항목 못 읽음, 조회 실패, 응답 이상, 서버 모드 알 수 없음 | 내 PC에서 네트워크·방화벽·Windows 경고·오류 표시, `SDP 미연결` 분리 표시, 제공 카드와 값 일치 | 내 PC에서의 `확인 불가` 화면, 예제(demo) 모드 화면 |
 | `renderAiConnection` | idle/loading/ok(test·verified)/error 9종 코드 | 실패(`ON_AI_PROVISIONING_PENDING`) 경로만 | 성공(ok) 경로 — 데모 엔진에 `readAiIdentity`가 없어 항상 실패 |
 | `renderExplanation` | idle/loading/ok/error, 근거 불일치, 근거 없음, 이미 실행됨 | 실패 경로만 | 성공(ok) 경로 — 위와 같은 이유 |
@@ -167,3 +171,5 @@ flowchart LR
 - 2026-10-30: 4일차 화면 다듬기(코드 커밋 `c92b9e7d9aa537c14ea62fda3c11b2c09ebb7c38`). 내용과 확인 결과는 `docs/STUDENT_DAY4_SCREEN_LOG.md`에 있습니다.
 - 2026-10-30: 3일차 「연결과 기록」 구역 추가(코드 커밋 `09f9becba11296e40b507682a29cfc66aa2e81e8`). 내용과 확인 결과는 `docs/STUDENT_DAY3_CONNECTION_LOG.md`에 있습니다.
 - 2026-10-30: 4일차 보정(코드 커밋 `44a63999123cc0fd18931bfdc023fcb0b75519e1`). 제공 카드와 겹치는 현재 값 표시를 빼고 `student/appearance.json`을 삭제했습니다. 내용과 확인 결과는 `docs/STUDENT_DAY4_SCREEN_LOG.md` 5-0절에 있습니다. 5일차 실행 안내 한 장은 `docs/STUDENT_ONE_PAGE_GUIDE.md`에 있습니다.
+
+- 2026-11-02: 6일차 제출 준비. `student/extension.mjs`에 「① 내 PC 값 4가지」 카드, 화면 값 기준 변화 계산, 실패 때 카드 이유 표시 등을 추가했습니다(변경 전체는 `docs/STUDENT_SUBMISSION_NOTE.md` 7절). 기준 코드 blob은 `02f70d8d482b3b0fe21747b3eabefcd7b8a9ccd9`입니다. 이 문서의 3~5절은 6일차 코드에서 다시 확인하지 않았습니다.
