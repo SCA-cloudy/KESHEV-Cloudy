@@ -10,7 +10,7 @@
 
 - `on-client/package.json`에 기록된 값: 이름 `alekov-client-starter`, 버전 `0.2.21`, `type: module`. 이 문서를 처음 쓸 때(21단계)는 `0.2.11`이었고, 2026-10-30에 제공 업데이트 도구로 `0.2.21`로 올렸습니다. 아래 절차 중 어디까지를 `0.2.21`에서 다시 확인했는지는 `docs/STUDENT_REPRODUCTION_LOG.md` 7절에 구분해 적었습니다.
 - Node.js: `package.json`의 `engines.node`는 `24.19.0`. `tools/start-alekov.ps1`은 실행 전 Node 버전을 확인하며, 메이저 버전이 **22~24 범위**를 벗어나면 실행을 중단합니다(파일 안의 `$major -lt 22 -or $major -gt 24` 조건을 직접 읽어서 확인). 24.19.0이 아니면 경고만 띄우고 계속 진행합니다.
-- 기준 코드(6일차 최종): `student/extension.mjs` git blob `02f70d8d482b3b0fe21747b3eabefcd7b8a9ccd9`, SHA256 `A4515E6D7995E83B09D82495E85A4EB95B7F04F7811EFD2CA41993EE88C9DF8B`. 이 문서의 3~5절(실행 절차·구성도·제공/학생 구분)은 21단계 때 확인한 내용이고, 6일차에 코드가 바뀐 부분은 6절 표와 8절에 적었습니다. 6일차 코드로 새 폴더에서 처음부터 따라 한 것은 커밋 후 확인 예정입니다(`docs/STUDENT_REPRODUCTION_LOG.md` 8절).
+- 기준 코드(6일차 최종): `student/extension.mjs` git blob `02f70d8d482b3b0fe21747b3eabefcd7b8a9ccd9`, SHA256 `A4515E6D7995E83B09D82495E85A4EB95B7F04F7811EFD2CA41993EE88C9DF8B`. 이 문서의 3~5절(실행 절차·구성도·제공/학생 구분)은 21단계 때 확인한 내용이고, 6일차에 코드가 바뀐 부분은 6절 표와 8절에 적었습니다. 6일차 코드는 커밋 `6862faddf6dcb2000085d3c2bddfa70e4615c8e3`를 새 폴더에 받아 켜고 조회까지 확인했습니다(`docs/STUDENT_REPRODUCTION_LOG.md` 8절). Windows에서 받으면 줄바꿈이 바뀌어 SHA256이 위 값과 다르게 나올 수 있고, 그때는 `git hash-object`로 비교합니다.
 - 외부 npm 의존성: 저장소 안에 `package-lock.json`이 **존재하지 않습니다**(직접 `ls`로 확인). `README.md`에도 "외부 npm 의존성이 없다"고 적혀 있고, 코드도 이와 일치합니다. 그래서 `npm install`은 필요하지 않습니다.
 - OS: `tools/start-alekov.ps1`은 PowerShell(Windows) 스크립트입니다. 다른 OS에서 PowerShell 없이 실행하는 경로는 이 문서에서 확인하지 않았으므로 **미확인**으로 남깁니다. `node src/server.mjs`로 직접 실행하는 경로는 Linux 환경(이 세션의 작업 공간)에서 직접 실행해 응답을 받은 것까지 확인했습니다.
 
