@@ -78,6 +78,7 @@
 | `docs/STUDENT_REPRODUCTION_LOG.md` | 6일차 코드 기준 상태를 추가(22단계). 이전 통과 커밋 `dc20ac8`의 결과는 그대로 이전 결과로 남김 |
 | `docs/STUDENT_ONE_PAGE_GUIDE.md` | 실행 안내 한 장을 같은 코드 기준으로 맞춤 |
 | `docs/STUDENT_SUBMISSION_NOTE.md` | 이 문서(새 파일) |
+| `docs/STUDENT_DEMO_GUIDE.md` | 7일차: 시연 순서, 제공/내 기능 구분, 한계, 근거, 다시 해 보는 순서(새 파일) |
 
 `student/extension.mjs`의 6일차 변경(직전 GitHub `main`의 코드와 비교):
 1. 「① 내 PC 값 4가지」 카드(CPU·메모리·디스크 직전 대비 변화, 방화벽 상태, 잰 시각, `[실제 측정]`)와 값을 직접 맞춰 볼 수 있는 `대조:` 안내를 추가. 조회 전·읽는 중·실패 때는 각각 `확인 불가 (이유)`로 표시
